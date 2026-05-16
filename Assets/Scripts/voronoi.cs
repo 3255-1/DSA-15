@@ -8,6 +8,7 @@ public class Line{
     public Vector2 s, t;// s->t
     public Vector2 f, m;
     public float angle;
+    public int id=-1;
     public Line(Vector2 s, Vector2 t){// calculate bisector
         this.s = s;
         this.t = t;
@@ -101,13 +102,26 @@ public class Polygon{
     }
 }
 
+public class CutStep{
+    public int cellIndex;
+    public Line cutterLine;
+    public Polygon currentPolygon; 
+    public CutStep(int idx,Line cL,Polygon poly){
+        this.cellIndex = idx;
+        this.cutterLine = cL;
+        this.currentPolygon = poly;
+    }
+}
+
 public class Voronoi{
     public List<Vector2> pts;
     public List<Polygon> cells;
+    public List<List<CutStep>> stepLists;
 
     public Voronoi(List<Vector2> pts, float mx, float my) {
         this.pts = pts;
         this.cells = new List<Polygon>();
+        this.stepLists = new List<List<CutStep>>();
         int sz = pts.Count;
         Debug.Log("sz: "+sz);
 
@@ -125,16 +139,29 @@ public class Voronoi{
 
         for(int i = 0; i < sz; i++) {
             List<Line> hp = new List<Line>(boundingBox);
+            List<CutStep> steps = new List<CutStep>();
+            List<Line> ans = geofunc.hp_intersect(hp);
 
             for(int j = 0; j < sz; j++) {
                 if (i == j) continue;
                 Line bc = geofunc.bisector(pts[i], pts[j]);
+                bc.id = j;
                 hp.Add(bc);
+                ans = geofunc.hp_intersect(hp);
+                bool isedge = false;
+                for(int k = 0;k < ans.Count; k++){
+                    if(j == ans[k].id)isedge = true;
+                }
+                if(isedge){
+                    steps.Add(new CutStep(j, bc, new Polygon(ans)));
+                    Debug.Log("pt "+i+": add pt"+j);
+                }
             }
 
-            List<Line> ans = geofunc.hp_intersect(hp);
             
             Debug.Log("anssz: "+ ans.Count);
+
+            stepLists.Add(steps);
 
             if (ans.Count >= 3) {
                 cells.Add(new Polygon(ans));
