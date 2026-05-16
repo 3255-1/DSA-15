@@ -125,10 +125,10 @@ public class Voronoi{
         int sz = pts.Count;
         Debug.Log("sz: "+sz);
 
-        Vector2 b1 = new Vector2(0, 0);
-        Vector2 b2 = new Vector2(mx, 0);
+        Vector2 b1 = new Vector2(-mx, -my);
+        Vector2 b2 = new Vector2(mx, -my);
         Vector2 b3 = new Vector2(mx, my);
-        Vector2 b4 = new Vector2(0, my);
+        Vector2 b4 = new Vector2(-mx, my);
 
         List<Line> boundingBox = new List<Line> {
             new Line(b1, b2),
@@ -157,8 +157,6 @@ public class Voronoi{
                     Debug.Log("pt "+i+": add pt"+j);
                 }
             }
-
-            
             Debug.Log("anssz: "+ ans.Count);
 
             stepLists.Add(steps);
