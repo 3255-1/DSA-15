@@ -53,7 +53,7 @@ public class geofunc{
         for(int i = 0; i < lines.Count; i++) {
             Debug.Log(i+" angle:"+lines[i].angle);
             if (i > 0 && Mathf.Abs(lines[i].angle - lines[i - 1].angle) < 1e-6f) {
-                if (IsRight(lines[i], Lineintersect(uLines[uLines.Count - 1], uLines[Mathf.Max(0, uLines.Count - 2)]))) {
+                if (IsRight(lines[i], uLines[uLines.Count - 1].s)) {
                     uLines[uLines.Count - 1] = lines[i];
                 }
                 continue;
