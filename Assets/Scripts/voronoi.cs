@@ -17,10 +17,11 @@ public class Line{
 }
 
 public class geofunc{
-    public static Vector2 random_point(float mx, float my){
+    public static Vector2 random_point(float halfWidth, float halfHeight){
         System.Random random = new System.Random();
-        Vector2 ans = new Vector2((float)random.NextDouble()*mx, (float)random.NextDouble()*my);
-        return ans;
+        float x = ((float)random.NextDouble() * 2f - 1f) * halfWidth;
+        float y = ((float)random.NextDouble() * 2f - 1f) * halfHeight;
+        return new Vector2(x, y);
     }
     public static Line bisector(Vector2 f, Vector2 m){
         Vector2 s = (f + m)/2f, d = Vector2.Perpendicular(m - f), t = s + d;
@@ -48,11 +49,11 @@ public class geofunc{
         return ans;
     }
 
-    public static List<Line> hp_intersect(List<Line> lines){
+    public static List<Line> hp_intersect(List<Line> lines, bool logAngles = true){
         lines = lines.OrderBy(l => l.angle).ToList();
         List<Line> uLines = new List<Line>();
         for(int i = 0; i < lines.Count; i++) {
-            Debug.Log(i+" angle:"+lines[i].angle);
+            if (logAngles) Debug.Log(i+" angle:"+lines[i].angle);
             if (i > 0 && Mathf.Abs(lines[i].angle - lines[i - 1].angle) < 1e-6f) {
                 if (IsRight(lines[i], uLines[uLines.Count - 1].s)) {
                     uLines[uLines.Count - 1] = lines[i];
@@ -118,6 +119,37 @@ public class Voronoi{
     public List<Polygon> cells;
     public List<List<CutStep>> stepLists;
 
+    public static List<Polygon> ComputeCells(List<Vector2> pts, float mx, float my) {
+        int sz = pts.Count;
+        if (sz == 0) return new List<Polygon>();
+
+        Vector2 b1 = new Vector2(-mx, -my);
+        Vector2 b2 = new Vector2(mx, -my);
+        Vector2 b3 = new Vector2(mx, my);
+        Vector2 b4 = new Vector2(-mx, my);
+        List<Line> boundingBox = new List<Line> {
+            new Line(b1, b2),
+            new Line(b2, b3),
+            new Line(b3, b4),
+            new Line(b4, b1)
+        };
+
+        List<Polygon> cells = new List<Polygon>();
+        for (int i = 0; i < sz; i++) {
+            List<Line> hp = new List<Line>(boundingBox);
+            List<Line> ans = geofunc.hp_intersect(hp, false);
+            for (int j = 0; j < sz; j++) {
+                if (i == j) continue;
+                Line bc = geofunc.bisector(pts[i], pts[j]);
+                bc.id = j;
+                hp.Add(bc);
+                ans = geofunc.hp_intersect(hp, false);
+            }
+            cells.Add(ans.Count >= 3 ? new Polygon(ans) : null);
+        }
+        return cells;
+    }
+
     public Voronoi(List<Vector2> pts, float mx, float my) {
         this.pts = pts;
         this.cells = new List<Polygon>();
@@ -140,14 +172,14 @@ public class Voronoi{
         for(int i = 0; i < sz; i++) {
             List<Line> hp = new List<Line>(boundingBox);
             List<CutStep> steps = new List<CutStep>();
-            List<Line> ans = geofunc.hp_intersect(hp);
+            List<Line> ans = geofunc.hp_intersect(hp, true);
 
             for(int j = 0; j < sz; j++) {
                 if (i == j) continue;
                 Line bc = geofunc.bisector(pts[i], pts[j]);
                 bc.id = j;
                 hp.Add(bc);
-                ans = geofunc.hp_intersect(hp);
+                ans = geofunc.hp_intersect(hp, true);
                 bool isedge = false;
                 for(int k = 0;k < ans.Count; k++){
                     if(j == ans[k].id)isedge = true;
