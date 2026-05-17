@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using TMPro;
@@ -12,9 +11,6 @@ public class Voronoi_Configuration : MonoBehaviour
 {
     const int RandomCountMin = 2;
     const int RandomCountMax = 30;
-    const float PickRadius = 0.2f;
-    const float DragPickRadius = 0.5f;
-    const float DragPreviewInterval = 0.05f;
 
     [Header("References")]
     public CreatePolygon createPolygon;
@@ -52,12 +48,11 @@ public class Voronoi_Configuration : MonoBehaviour
     Slider speedSlider;
     TextMeshProUGUI speedDisplayText;
 
+    DrawAreaSeedInteraction drawAreaInteraction;
+
     readonly List<Vector2> seedPoints = new List<Vector2>();
 
-    int dragPointIndex = -1;
-    bool isDraggingSeed;
-    float nextDragPreviewTime;
-    Camera dragEventCamera;
+    float nextAutoPlayStepTime;
 
     public IReadOnlyList<Vector2> SeedPoints => seedPoints;
     public CursorToolMode CursorMode => cursorMode;
@@ -77,13 +72,7 @@ public class Voronoi_Configuration : MonoBehaviour
 
     void Start()
     {
-        if (drawAreaRawImage != null)
-        {
-            DrawAreaInput input = drawAreaRawImage.gameObject.GetComponent<DrawAreaInput>();
-            if (input == null) input = drawAreaRawImage.gameObject.AddComponent<DrawAreaInput>();
-            input.Init(this);
-        }
-
+        SetupDrawAreaInput();
         WireListeners();
         SelectSeedMode(SeedPointMode.Random);
         SelectCursorTool(CursorToolMode.View);
@@ -91,16 +80,70 @@ public class Voronoi_Configuration : MonoBehaviour
         SyncSeedPointsToBackend(clearOnly: true);
     }
 
+    void SetupDrawAreaInput()
+    {
+        if (drawAreaRawImage == null) return;
+
+        drawAreaInteraction = drawAreaRawImage.GetComponent<DrawAreaSeedInteraction>();
+        if (drawAreaInteraction == null)
+            drawAreaInteraction = drawAreaRawImage.gameObject.AddComponent<DrawAreaSeedInteraction>();
+        drawAreaInteraction.Init(this, seedPoints, createPolygon, drawAreaRawImage);
+
+        DrawAreaInput input = drawAreaRawImage.GetComponent<DrawAreaInput>();
+        if (input == null) input = drawAreaRawImage.gameObject.AddComponent<DrawAreaInput>();
+        input.Init(drawAreaInteraction);
+    }
+
     void Update()
     {
-        if (!stepByStepActive || createPolygon == null || isDraggingSeed) return;
-        if (!createPolygon.AllowsStepKeyboard) return;
+        UpdateStepByStepInput();
+        UpdateAutoPlay();
+    }
+
+    void UpdateStepByStepInput()
+    {
+        if (!stepByStepActive || createPolygon == null || IsDraggingSeed()) return;
+        if (!createPolygon.AllowsStepPlayback) return;
         if (Keyboard.current == null) return;
 
         if (Keyboard.current.leftArrowKey.wasPressedThisFrame)
             createPolygon.StepBackward();
         if (Keyboard.current.rightArrowKey.wasPressedThisFrame)
             createPolygon.StepForward();
+    }
+
+    void UpdateAutoPlay()
+    {
+        if (!playActive || createPolygon == null || IsDraggingSeed()) return;
+
+        if (seedPoints.Count == 0)
+        {
+            SetPlayActive(false);
+            return;
+        }
+
+        if (!createPolygon.AllowsStepPlayback)
+            createPolygon.EnsureStepPlaybackReady();
+
+        if (createPolygon.HasCompletedPlayback)
+        {
+            SetPlayActive(false);
+            return;
+        }
+
+        if (Time.unscaledTime < nextAutoPlayStepTime) return;
+
+        nextAutoPlayStepTime = Time.unscaledTime + GetPlayStepInterval();
+        if (createPolygon.StepForward())
+            SetPlayActive(false);
+    }
+
+    bool IsDraggingSeed() => drawAreaInteraction != null && drawAreaInteraction.IsDragging;
+
+    float GetPlayStepInterval()
+    {
+        float speed = speedSlider != null ? speedSlider.value : 1f;
+        return 1f / Mathf.Max(speed, 0.1f);
     }
 
     void BindUI()
@@ -213,10 +256,24 @@ public class Voronoi_Configuration : MonoBehaviour
 
     void SetPlayActive(bool active)
     {
+        if (active)
+        {
+            if (createPolygon == null || seedPoints.Count == 0)
+            {
+                playActive = false;
+                SetSelected(playPlaybackButton, false);
+                return;
+            }
+
+            createPolygon.EnsureStepPlaybackReady();
+            if (createPolygon.HasCompletedPlayback)
+                createPolygon.RestartStepPlayback();
+            nextAutoPlayStepTime = Time.unscaledTime;
+            SetStepByStepActive(false);
+        }
+
         playActive = active;
         SetSelected(playPlaybackButton, playActive);
-        if (active)
-            SetStepByStepActive(false);
     }
 
     void SetStepByStepActive(bool active)
@@ -298,18 +355,18 @@ public class Voronoi_Configuration : MonoBehaviour
 
     void OnManualGenerateClicked()
     {
-        if (manualXInput == null || manualYInput == null) return;
+        if (manualXInput == null || manualYInput == null || drawAreaInteraction == null) return;
         if (!float.TryParse(manualXInput.text, out float x)) return;
         if (!float.TryParse(manualYInput.text, out float y)) return;
-        if (!IsInsideMapBounds(x, y)) return;
+        if (!drawAreaInteraction.IsInsideMapBounds(x, y)) return;
         Vector2 candidate = new Vector2(x, y);
-        if (HasPointNear(candidate)) return;
+        if (drawAreaInteraction.HasPointNear(candidate)) return;
 
         seedPoints.Add(candidate);
         SyncSeedPointsToBackend();
     }
 
-    void SyncSeedPointsToBackend(bool clearOnly = false)
+    public void SyncSeedPointsToBackend(bool clearOnly = false)
     {
         if (createPolygon == null) return;
         if (clearOnly || seedPoints.Count == 0)
@@ -319,203 +376,11 @@ public class Voronoi_Configuration : MonoBehaviour
         }
         createPolygon.ClearSeedPoints();
         foreach (Vector2 p in seedPoints)
-            createPolygon.TryAddSeedPoint(p, PickRadius);
+            createPolygon.TryAddSeedPoint(p, DrawAreaSeedInteraction.PickRadius);
         if (cursorMode == CursorToolMode.Drag)
             createPolygon.RebuildVoronoiFastPreview();
         else
             createPolygon.RebuildVoronoiStepMode();
-    }
-
-    public void HandleDrawAreaPointerDown(PointerEventData eventData)
-    {
-        if (createPolygon == null || drawAreaRawImage == null) return;
-
-        Vector2 mapPoint = ScreenToMapPoint(eventData.position, eventData.pressEventCamera);
-        if (!IsValidMapPoint(mapPoint)) return;
-
-        if (cursorMode == CursorToolMode.Edit
-            && eventData.button == PointerEventData.InputButton.Right)
-        {
-            TryDeleteSeedAt(mapPoint);
-            return;
-        }
-
-        if (cursorMode == CursorToolMode.Drag
-            && eventData.button == PointerEventData.InputButton.Left)
-        {
-            EnsureSeedPointsSyncedFromBackend();
-            dragEventCamera = eventData.pressEventCamera;
-            dragPointIndex = FindNearestSeedIndex(mapPoint, DragPickRadius);
-            isDraggingSeed = dragPointIndex >= 0;
-            if (isDraggingSeed)
-            {
-                nextDragPreviewTime = 0f;
-                ApplyDragPosition(dragPointIndex, ClampToMap(mapPoint), forcePreview: true);
-            }
-        }
-    }
-
-    public void HandleDrawAreaDrag(PointerEventData eventData)
-    {
-        if (!isDraggingSeed || dragPointIndex < 0 || createPolygon == null) return;
-
-        dragEventCamera = eventData.pressEventCamera;
-        Vector2 mapPoint = ScreenToMapPoint(eventData.position, dragEventCamera);
-        if (!IsValidMapPoint(mapPoint)) return;
-
-        ApplyDragPosition(dragPointIndex, ClampToMap(mapPoint), forcePreview: false);
-    }
-
-    public void HandleDrawAreaEndDrag(PointerEventData eventData)
-    {
-        if (cursorMode == CursorToolMode.Drag && eventData.button == PointerEventData.InputButton.Left)
-            EndSeedDrag();
-    }
-
-    public void HandleDrawAreaLeftClick(PointerEventData eventData)
-    {
-        if (cursorMode != CursorToolMode.Edit) return;
-        if (createPolygon == null || drawAreaRawImage == null) return;
-
-        Vector2 mapPoint = ScreenToMapPoint(eventData.position, eventData.pressEventCamera);
-        TryAddSeedAt(mapPoint);
-    }
-
-    public void HandleDrawAreaPointerUp(PointerEventData eventData)
-    {
-        if (cursorMode == CursorToolMode.Drag
-            && eventData.button == PointerEventData.InputButton.Left
-            && isDraggingSeed)
-        {
-            EndSeedDrag();
-        }
-    }
-
-    void TryAddSeedAt(Vector2 mapPoint)
-    {
-        if (!IsValidMapPoint(mapPoint)) return;
-        if (!IsInsideMapBounds(mapPoint.x, mapPoint.y)) return;
-        if (HasPointNear(mapPoint)) return;
-
-        seedPoints.Add(mapPoint);
-        SyncSeedPointsToBackend();
-    }
-
-    void TryDeleteSeedAt(Vector2 mapPoint)
-    {
-        int idx = FindNearestSeedIndex(mapPoint);
-        if (idx < 0) return;
-
-        seedPoints.RemoveAt(idx);
-        createPolygon.TryRemoveSeedPointNear(mapPoint, PickRadius);
-        if (seedPoints.Count == 0)
-            createPolygon.ClearSeedPoints();
-        else
-            createPolygon.RebuildVoronoiStepMode();
-    }
-
-    void ApplyDragPosition(int index, Vector2 mapPoint, bool forcePreview)
-    {
-        createPolygon.MoveSeedPoint(index, mapPoint);
-        if (index >= 0 && index < seedPoints.Count)
-            seedPoints[index] = mapPoint;
-
-        if (!forcePreview && Time.unscaledTime < nextDragPreviewTime) return;
-        nextDragPreviewTime = Time.unscaledTime + DragPreviewInterval;
-        createPolygon.RebuildVoronoiFastPreview();
-    }
-
-    void EndSeedDrag()
-    {
-        if (!isDraggingSeed) return;
-
-        isDraggingSeed = false;
-        dragEventCamera = null;
-        if (dragPointIndex >= 0 && createPolygon != null)
-        {
-            createPolygon.RebuildVoronoiFastPreview();
-            createPolygon.FinishDragDisplay();
-        }
-        dragPointIndex = -1;
-    }
-
-    void EnsureSeedPointsSyncedFromBackend()
-    {
-        if (createPolygon == null) return;
-        if (seedPoints.Count == createPolygon.SeedPoints.Count) return;
-        seedPoints.Clear();
-        foreach (Vector2 p in createPolygon.SeedPoints)
-            seedPoints.Add(p);
-    }
-
-    int FindNearestSeedIndex(Vector2 mapPoint, float radius = PickRadius)
-    {
-        int best = -1;
-        float bestDist = radius * radius;
-        for (int i = 0; i < seedPoints.Count; i++)
-        {
-            float d = (seedPoints[i] - mapPoint).sqrMagnitude;
-            if (d <= bestDist)
-            {
-                bestDist = d;
-                best = i;
-            }
-        }
-        if (best >= 0) return best;
-        return createPolygon != null
-            ? createPolygon.FindNearestPointIndex(mapPoint, radius)
-            : -1;
-    }
-
-    Vector2 ClampToMap(Vector2 mapPoint)
-    {
-        mapPoint.x = Mathf.Clamp(mapPoint.x, -createPolygon.mapWidth, createPolygon.mapWidth);
-        mapPoint.y = Mathf.Clamp(mapPoint.y, -createPolygon.mapHeight, createPolygon.mapHeight);
-        return mapPoint;
-    }
-
-    Camera GetDrawAreaEventCamera()
-    {
-        if (drawAreaRawImage == null) return null;
-        Canvas canvas = drawAreaRawImage.canvas;
-        if (canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay)
-            return canvas.worldCamera;
-        return null;
-    }
-
-    Vector2 ScreenToMapPoint(Vector2 screenPos, Camera eventCamera)
-    {
-        RectTransform rt = drawAreaRawImage.rectTransform;
-        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(rt, screenPos, eventCamera, out Vector2 local))
-            return new Vector2(float.NaN, float.NaN);
-
-        Rect rect = rt.rect;
-        float u = Mathf.InverseLerp(rect.xMin, rect.xMax, local.x);
-        float v = Mathf.InverseLerp(rect.yMin, rect.yMax, local.y);
-        float x = Mathf.Lerp(-createPolygon.mapWidth, createPolygon.mapWidth, u);
-        float y = Mathf.Lerp(-createPolygon.mapHeight, createPolygon.mapHeight, v);
-        return new Vector2(x, y);
-    }
-
-    static bool IsValidMapPoint(Vector2 p) => !float.IsNaN(p.x) && !float.IsNaN(p.y);
-
-    bool IsInsideMapBounds(float x, float y)
-    {
-        if (createPolygon == null) return false;
-        return x >= -createPolygon.mapWidth && x <= createPolygon.mapWidth
-            && y >= -createPolygon.mapHeight && y <= createPolygon.mapHeight;
-    }
-
-    bool HasPointNear(Vector2 point)
-    {
-        if (createPolygon != null && createPolygon.FindNearestPointIndex(point, PickRadius) >= 0)
-            return true;
-        float r2 = PickRadius * PickRadius;
-        foreach (Vector2 p in seedPoints)
-        {
-            if ((p - point).sqrMagnitude <= r2) return true;
-        }
-        return false;
     }
 
     static void SetUIEnabled(Component c, bool enabled)

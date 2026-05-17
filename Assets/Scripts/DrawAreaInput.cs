@@ -8,21 +8,21 @@ public class DrawAreaInput : MonoBehaviour,
 {
     const float ClickMoveThresholdPixels = 12f;
 
-    Voronoi_Configuration config;
+    DrawAreaSeedInteraction interaction;
     Vector2 pointerDownScreenPos;
     bool editLeftDown;
 
-    public void Init(Voronoi_Configuration configuration)
+    public void Init(DrawAreaSeedInteraction seedInteraction)
     {
-        config = configuration;
+        interaction = seedInteraction;
     }
 
     public void OnPointerDown(PointerEventData eventData)
     {
-        if (config == null) return;
-        config.HandleDrawAreaPointerDown(eventData);
+        if (interaction == null) return;
+        interaction.HandlePointerDown(eventData);
 
-        if (config.CursorMode == CursorToolMode.Edit
+        if (interaction.CursorMode == CursorToolMode.Edit
             && eventData.button == PointerEventData.InputButton.Left)
         {
             editLeftDown = true;
@@ -32,35 +32,35 @@ public class DrawAreaInput : MonoBehaviour,
 
     public void OnPointerUp(PointerEventData eventData)
     {
-        if (config == null) return;
+        if (interaction == null) return;
 
         if (editLeftDown
             && eventData.button == PointerEventData.InputButton.Left
             && Vector2.Distance(eventData.position, pointerDownScreenPos) <= ClickMoveThresholdPixels)
         {
-            config.HandleDrawAreaLeftClick(eventData);
+            interaction.HandleLeftClick(eventData);
         }
 
         editLeftDown = false;
-        config.HandleDrawAreaPointerUp(eventData);
+        interaction.HandlePointerUp(eventData);
     }
 
     public void OnBeginDrag(PointerEventData eventData)
     {
-        if (config == null || config.CursorMode != CursorToolMode.Drag) return;
+        if (interaction == null || interaction.CursorMode != CursorToolMode.Drag) return;
         if (eventData.button != PointerEventData.InputButton.Left) return;
-        config.HandleDrawAreaDrag(eventData);
+        interaction.HandleDrag(eventData);
     }
 
     public void OnDrag(PointerEventData eventData)
     {
-        if (config == null || config.CursorMode != CursorToolMode.Drag) return;
-        config.HandleDrawAreaDrag(eventData);
+        if (interaction == null || interaction.CursorMode != CursorToolMode.Drag) return;
+        interaction.HandleDrag(eventData);
     }
 
     public void OnEndDrag(PointerEventData eventData)
     {
-        if (config == null) return;
-        config.HandleDrawAreaEndDrag(eventData);
+        if (interaction == null) return;
+        interaction.HandleEndDrag(eventData);
     }
 }

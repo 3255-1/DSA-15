@@ -22,22 +22,22 @@ public class CreatePolygon : MonoBehaviour
 
     [Header("邊界線設定")]
     public Color borderlineColor = Color.black;
-    public Color currentCellBorderColor=Color.black;
+    public Color currentCellBorderColor = Color.black;
     public float borderWidth = 0.05f;
     public Material borderMaterial;
 
     private LineRenderer bisectorLineRenderer;
     private LineRenderer connectionLineRenderer;
+    private LineRenderer lineRenderer;
     private MeshFilter meshFilter;
     private MeshRenderer meshRenderer;
-    private LineRenderer lineRenderer;
 
     private Voronoi voronoiResult;
     private List<Vector2> randomPoints = new List<Vector2>();
     private List<GameObject> seedPointMarkers = new List<GameObject>();
     private List<GameObject> meshs = new List<GameObject>();
     private readonly List<Color> cellColors = new List<Color>();
-    private List<LineRenderer> borderlines = new();
+    private readonly List<LineRenderer> borderlines = new List<LineRenderer>();
 
     private int currentCellIdx = 0;
     private int currentStepIdx = -1;
@@ -45,11 +45,35 @@ public class CreatePolygon : MonoBehaviour
     private bool fastPreviewMode = false;
 
     public IReadOnlyList<Vector2> SeedPoints => randomPoints;
-    public bool AllowsStepKeyboard => !fastPreviewMode;
+    public bool AllowsStepPlayback => !fastPreviewMode;
+    public bool HasSeedPoints => randomPoints.Count > 0;
+
+    public void EnsureStepPlaybackReady()
+    {
+        if (randomPoints.Count == 0) return;
+        if (fastPreviewMode || voronoiResult == null)
+            RebuildVoronoiStepMode();
+    }
+
+    public void RestartStepPlayback()
+    {
+        if (randomPoints.Count == 0) return;
+        if (voronoiResult == null)
+        {
+            RebuildVoronoiStepMode();
+            return;
+        }
+        fastPreviewMode = false;
+        restNextStep = false;
+        currentCellIdx = 0;
+        currentStepIdx = -1;
+        ClearAllCellMeshes();
+        ClearBorderlineFrom(0);
+        UpdateVisualization();
+    }
 
     void Start()
     {
-
         EnsureCellMeshes(pointCount);
         CreateBorderlines(pointCount);
         SetupComponents();
@@ -57,16 +81,17 @@ public class CreatePolygon : MonoBehaviour
         if (autoGenerateOnStart) GenerateNewVoronoi();
     }
 
-
-
     void Update()
     {
         if (Keyboard.current == null) return;
         if (Keyboard.current.rKey.wasPressedThisFrame) GenerateNewVoronoi();
     }
 
-    public void StepForward() => NextStep();
+    public bool StepForward() => NextStep();
     public void StepBackward() => PreviousStep();
+
+    public bool HasCompletedPlayback =>
+        voronoiResult != null && restNextStep && currentCellIdx >= voronoiResult.pts.Count;
 
     public void ClearSeedPoints()
     {
@@ -81,7 +106,7 @@ public class CreatePolygon : MonoBehaviour
         for (int i = 0; i < count; i++)
             randomPoints.Add(geofunc.random_point(mapWidth, mapHeight));
         EnsureCellMeshes(Mathf.Max(randomPoints.Count, 1));
-        CreateBorderlines(Mathf.Max(randomPoints.Count,1));
+        CreateBorderlines(Mathf.Max(randomPoints.Count, 1));
         RefreshSeedPointMarkers();
     }
 
@@ -90,7 +115,7 @@ public class CreatePolygon : MonoBehaviour
         if (FindNearestPointIndex(point, minSeparation) >= 0) return false;
         randomPoints.Add(point);
         EnsureCellMeshes(Mathf.Max(randomPoints.Count, meshs.Count));
-        CreateBorderlines(Mathf.Max(randomPoints.Count,borderlines.Count));
+        CreateBorderlines(Mathf.Max(randomPoints.Count, borderlines.Count));
         RefreshSeedPointMarkers();
         return true;
     }
@@ -162,7 +187,7 @@ public class CreatePolygon : MonoBehaviour
         bisectorLineRenderer.positionCount = 0;
         connectionLineRenderer.positionCount = 0;
         meshFilter.mesh = new Mesh();
-        lineRenderer.positionCount=0;
+        if (lineRenderer != null) lineRenderer.positionCount = 0;
 
         if (randomPoints.Count == 0)
         {
@@ -183,24 +208,23 @@ public class CreatePolygon : MonoBehaviour
                 mf.mesh = CreatePolygonMesh(cells[i].vertices, color, randomPoints[i]);
                 DrawBorderline(cells[i].vertices);
                 CopyBorderline(i);
-                lineRenderer.positionCount=0;
+                if (lineRenderer != null) lineRenderer.positionCount = 0;
             }
-            else{
+            else
+            {
                 mf.mesh = new Mesh();
-                borderlines[i].positionCount=0;
+                if (i < borderlines.Count) borderlines[i].positionCount = 0;
             }
-                
         }
     }
 
-    /// <summary>拖曳結束：沿用預覽 mesh，不重算 Voronoi（避免卡頓）。</summary>
     public void FinishDragDisplay()
     {
         fastPreviewMode = false;
         bisectorLineRenderer.positionCount = 0;
         connectionLineRenderer.positionCount = 0;
         meshFilter.mesh = new Mesh();
-        lineRenderer.positionCount=0;
+        if (lineRenderer != null) lineRenderer.positionCount = 0;
         voronoiResult = null;
 
         if (randomPoints.Count == 0) return;
@@ -231,33 +255,58 @@ public class CreatePolygon : MonoBehaviour
         }
     }
 
-    void CreateBorderlines(int count){
-        pointCount=Mathf.Max(count,1);
-        while(borderlines.Count<pointCount){
-            int i=borderlines.Count;
-            GameObject newborder=new GameObject($"CellBorder_{i}");
-            newborder.layer=gameObject.layer;
-            newborder.transform.SetParent(transform);
-            LineRenderer l=newborder.AddComponent<LineRenderer>();
-            l.material=borderMaterial!=null?borderMaterial:new Material(Shader.Find("Sprites/Default"));
-            l.startColor=l.endColor=borderlineColor;
-            l.startWidth=l.endWidth=borderWidth;
+    void CreateBorderlines(int count)
+    {
+        pointCount = Mathf.Max(count, 1);
+        while (borderlines.Count < pointCount)
+        {
+            GameObject newBorder = new GameObject($"CellBorder_{borderlines.Count}");
+            newBorder.layer = gameObject.layer;
+            newBorder.transform.SetParent(transform);
+            LineRenderer l = newBorder.AddComponent<LineRenderer>();
+            l.material = borderMaterial != null ? borderMaterial : new Material(Shader.Find("Sprites/Default"));
+            l.startColor = l.endColor = borderlineColor;
+            l.startWidth = l.endWidth = borderWidth;
             borderlines.Add(l);
         }
     }
 
-    void ClearAllBorderlines(){
-        lineRenderer.positionCount=0;
-        foreach(LineRenderer l in borderlines) l.positionCount=0;
+    void ClearAllBorderlines()
+    {
+        if (lineRenderer != null) lineRenderer.positionCount = 0;
+        foreach (LineRenderer l in borderlines)
+            if (l != null) l.positionCount = 0;
     }
 
-    void ClearBorderline(int whichone){
-        borderlines[whichone].positionCount=0;
+    void ClearBorderline(int index)
+    {
+        if (index < 0 || index >= borderlines.Count || borderlines[index] == null) return;
+        borderlines[index].positionCount = 0;
     }
 
-    void ClearBorderlineFrom(int from){
-        for(int i=from;i<borderlines.Count;i++){
-            borderlines[i].positionCount=0;
+    void ClearBorderlineFrom(int fromIndex)
+    {
+        for (int i = fromIndex; i < borderlines.Count; i++)
+            ClearBorderline(i);
+    }
+
+    void DrawBorderline(List<Vector2> vertices)
+    {
+        if (lineRenderer == null || vertices == null || vertices.Count < 3) return;
+        lineRenderer.positionCount = vertices.Count + 1;
+        for (int i = 0; i < vertices.Count; i++)
+            lineRenderer.SetPosition(i, new Vector3(vertices[i].x, vertices[i].y, -0.01f));
+        lineRenderer.SetPosition(vertices.Count, new Vector3(vertices[0].x, vertices[0].y, -0.01f));
+    }
+
+    void CopyBorderline(int index)
+    {
+        if (lineRenderer == null || index < 0 || index >= borderlines.Count || borderlines[index] == null) return;
+        borderlines[index].positionCount = lineRenderer.positionCount;
+        for (int i = 0; i < lineRenderer.positionCount; i++)
+        {
+            Vector3 pos = lineRenderer.GetPosition(i);
+            borderlines[index].SetPosition(i, new Vector3(pos.x, pos.y, -0.005f));
         }
     }
 
@@ -340,13 +389,13 @@ public class CreatePolygon : MonoBehaviour
             meshMaterial = new Material(Shader.Find("Sprites/Default"));
         meshRenderer.material = meshMaterial;
 
-        lineRenderer=gameObject.GetComponent<LineRenderer>();
-        if(lineRenderer==null) lineRenderer=gameObject.AddComponent<LineRenderer>();
-        lineRenderer.positionCount=0;
-        lineRenderer.startColor=lineRenderer.endColor=currentCellBorderColor;
-        lineRenderer.startWidth=lineRenderer.endWidth=borderWidth;
-        if(borderMaterial==null) borderMaterial=new Material(Shader.Find("Sprites/Default"));
-        lineRenderer.material=borderMaterial;
+        lineRenderer = gameObject.GetComponent<LineRenderer>();
+        if (lineRenderer == null) lineRenderer = gameObject.AddComponent<LineRenderer>();
+        lineRenderer.positionCount = 0;
+        lineRenderer.startColor = lineRenderer.endColor = currentCellBorderColor;
+        lineRenderer.startWidth = lineRenderer.endWidth = borderWidth;
+        if (borderMaterial == null) borderMaterial = new Material(Shader.Find("Sprites/Default"));
+        lineRenderer.material = borderMaterial;
 
         int layer = gameObject.layer;
         GameObject bObj = new GameObject("BisectorLine");
@@ -372,12 +421,12 @@ public class CreatePolygon : MonoBehaviour
         lr.material = new Material(Shader.Find("Sprites/Default"));
     }
 
-    void NextStep()
+    bool NextStep()
     {
         if (voronoiResult == null)
         {
             RebuildVoronoiStepMode();
-            return;
+            return false;
         }
         currentStepIdx++;
         if (restNextStep)
@@ -397,10 +446,11 @@ public class CreatePolygon : MonoBehaviour
                 restNextStep = true;
                 bisectorLineRenderer.positionCount = 0;
                 connectionLineRenderer.positionCount = 0;
-                return;
+                return true;
             }
         }
         UpdateVisualization();
+        return false;
     }
 
     void PreviousStep()
@@ -426,7 +476,7 @@ public class CreatePolygon : MonoBehaviour
             currentCellIdx--;
             currentStepIdx = LastCutStepIndex(currentCellIdx);
             ClearCellMeshesFrom(currentCellIdx + 1);
-            ClearBorderlineFrom(currentCellIdx+1);
+            ClearBorderlineFrom(currentCellIdx + 1);
             UpdateVisualization();
             return;
         }
@@ -436,7 +486,7 @@ public class CreatePolygon : MonoBehaviour
             currentCellIdx = Mathf.Max(0, currentCellIdx - 1);
             currentStepIdx = LastCutStepIndex(currentCellIdx);
             ClearCellMeshesFrom(currentCellIdx + 1);
-            ClearBorderlineFrom(currentCellIdx+1);
+            ClearBorderlineFrom(currentCellIdx + 1);
             UpdateVisualization();
             return;
         }
@@ -450,11 +500,11 @@ public class CreatePolygon : MonoBehaviour
             return;
         }
 
-        if (currentStepIdx == voronoiResult.stepLists[currentCellIdx].Count - 1){
+        if (currentStepIdx == voronoiResult.stepLists[currentCellIdx].Count - 1)
+        {
             ClearCellMesh(currentCellIdx);
             ClearBorderline(currentCellIdx);
         }
-            
         currentStepIdx--;
         UpdateVisualization();
     }
@@ -512,8 +562,9 @@ public class CreatePolygon : MonoBehaviour
             {
                 meshs[currentCellIdx].GetComponent<MeshFilter>().mesh = previewMesh;
                 meshFilter.mesh = new Mesh();
+                DrawBorderline(polyToDraw.vertices);
                 CopyBorderline(currentCellIdx);
-                lineRenderer.positionCount=0;
+                if (lineRenderer != null) lineRenderer.positionCount = 0;
             }
             else
             {
@@ -523,7 +574,7 @@ public class CreatePolygon : MonoBehaviour
         else
         {
             meshFilter.mesh = new Mesh();
-            lineRenderer.positionCount=0;
+            if (lineRenderer != null) lineRenderer.positionCount = 0;
         }
 
         if (currentStepIdx == -2)
@@ -581,20 +632,5 @@ public class CreatePolygon : MonoBehaviour
         mesh.colors = colors;
         mesh.RecalculateBounds();
         return mesh;
-    }
-
-    void DrawBorderline(List<Vector2> vertices){
-        lineRenderer.positionCount=vertices.Count+1;
-        for(int i=0;i<vertices.Count;i++){
-            lineRenderer.SetPosition(i,new Vector3(vertices[i].x,vertices[i].y,-0.01f));
-        }
-        lineRenderer.SetPosition(vertices.Count,new Vector3(vertices[0].x,vertices[0].y,-0.01f));
-    }
-    void CopyBorderline(int idx){
-        borderlines[idx].positionCount=lineRenderer.positionCount;
-        for(int i=0;i<lineRenderer.positionCount;i++){
-            Vector3 pos=lineRenderer.GetPosition(i);
-            borderlines[idx].SetPosition(i,new Vector3(pos.x,pos.y,-0.005f));
-        }
     }
 }
