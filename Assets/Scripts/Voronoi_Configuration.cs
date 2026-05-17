@@ -6,7 +6,7 @@ using TMPro;
 
 public enum SeedPointMode { Random, Manual, Mixed }
 public enum CursorToolMode { View, Edit, Drag }
-public enum CellFillMode { Wireframe, Solid, Dynamic }
+public enum CellFillMode { Wireframe, Solid, Radial }
 public class Voronoi_Configuration : MonoBehaviour
 {
     const int RandomCountMin = 2;
@@ -40,7 +40,7 @@ public class Voronoi_Configuration : MonoBehaviour
     Button dragToolButton;
     Button wireframeFillButton;
     Button solidFillButton;
-    Button dynamicFillButton;
+    Button radialFillButton;
     Button playPlaybackButton;
     Button stepPlaybackButton;
     Toggle enableImpactParticlesToggle;
@@ -56,6 +56,9 @@ public class Voronoi_Configuration : MonoBehaviour
 
     public IReadOnlyList<Vector2> SeedPoints => seedPoints;
     public CursorToolMode CursorMode => cursorMode;
+
+    bool IsCutAnimationEnabled() =>
+        enableCutAnimationToggle == null || enableCutAnimationToggle.isOn;
 
     void Awake()
     {
@@ -87,7 +90,14 @@ public class Voronoi_Configuration : MonoBehaviour
         drawAreaInteraction = drawAreaRawImage.GetComponent<DrawAreaSeedInteraction>();
         if (drawAreaInteraction == null)
             drawAreaInteraction = drawAreaRawImage.gameObject.AddComponent<DrawAreaSeedInteraction>();
-        drawAreaInteraction.Init(this, seedPoints, createPolygon, drawAreaRawImage);
+        drawAreaInteraction.Init(
+            seedPoints,
+            createPolygon,
+            drawAreaRawImage,
+            () => cursorMode,
+            IsCutAnimationEnabled,
+            () => !playActive,
+            () => SyncSeedPointsToBackend());
 
         DrawAreaInput input = drawAreaRawImage.GetComponent<DrawAreaInput>();
         if (input == null) input = drawAreaRawImage.gameObject.AddComponent<DrawAreaInput>();
@@ -102,6 +112,7 @@ public class Voronoi_Configuration : MonoBehaviour
 
     void UpdateStepByStepInput()
     {
+        if (!IsCutAnimationEnabled()) return;
         if (!stepByStepActive || createPolygon == null || IsDraggingSeed()) return;
         if (!createPolygon.AllowsStepPlayback) return;
         if (Keyboard.current == null) return;
@@ -114,6 +125,7 @@ public class Voronoi_Configuration : MonoBehaviour
 
     void UpdateAutoPlay()
     {
+        if (!IsCutAnimationEnabled()) return;
         if (!playActive || createPolygon == null || IsDraggingSeed()) return;
 
         if (seedPoints.Count == 0)
@@ -172,7 +184,7 @@ public class Voronoi_Configuration : MonoBehaviour
         wireframeFillButton = FindButton(root, "WireframeButton");
         solidFillButton = FindButton(root, "SolidButton");
 
-        dynamicFillButton = FindButton(root, "DynamicButton");
+        radialFillButton = FindButton(root, "RadialButton");
         playPlaybackButton = FindButton(root, "Play");
         stepPlaybackButton = FindButton(root, "StepByStep");
 
@@ -222,11 +234,12 @@ public class Voronoi_Configuration : MonoBehaviour
         wireframeFillButton?.onClick.AddListener(() => SelectCellFill(CellFillMode.Wireframe));
         solidFillButton?.onClick.AddListener(() => SelectCellFill(CellFillMode.Solid));
 
-        dynamicFillButton?.onClick.AddListener(() => SelectCellFill(CellFillMode.Dynamic));
+        radialFillButton?.onClick.AddListener(() => SelectCellFill(CellFillMode.Radial));
         playPlaybackButton?.onClick.AddListener(OnPlayClicked);
         stepPlaybackButton?.onClick.AddListener(OnStepByStepClicked);
 
         speedSlider?.onValueChanged.AddListener(OnSpeedSliderChanged);
+        enableCutAnimationToggle?.onValueChanged.AddListener(OnCutAnimationToggleChanged);
     }
 
     void InitializeAnimationUI()
@@ -242,20 +255,69 @@ public class Voronoi_Configuration : MonoBehaviour
 
         if (speedSlider != null)
             UpdateSpeedDisplay(speedSlider.value);
+
+        ApplyAnimationControlsInteractable();
+        SetUIEnabled(dragToolButton, !playActive);
+    }
+
+    void OnCutAnimationToggleChanged(bool _)
+    {
+        ApplyAnimationControlsInteractable();
+        RedrawPreserveProgressOrFinal();
+    }
+
+    void RedrawPreserveProgressOrFinal()
+    {
+        if (createPolygon == null || seedPoints.Count == 0) return;
+        if (!IsCutAnimationEnabled())
+            createPolygon.ShowFinalVoronoiState();
+        else
+            createPolygon.RefreshCellFillAtCurrentProgress();
+    }
+
+    void ApplyAnimationControlsInteractable()
+    {
+        bool animOn = IsCutAnimationEnabled();
+        SetUIEnabled(enableImpactParticlesToggle, animOn);
+        SetUIEnabled(speedSlider, animOn);
+        SetUIEnabled(playPlaybackButton, animOn);
+        SetUIEnabled(stepPlaybackButton, animOn);
+
+        if (!animOn)
+        {
+            SetPlayActive(false);
+            SetStepByStepActive(false);
+        }
+    }
+
+    void RefreshVoronoiDisplay()
+    {
+        if (createPolygon == null || seedPoints.Count == 0) return;
+        if (!IsCutAnimationEnabled())
+            createPolygon.ShowFinalVoronoiState();
+        else if (cursorMode == CursorToolMode.Drag)
+            createPolygon.RebuildVoronoiFastPreview();
+        else
+            createPolygon.RebuildVoronoiStepMode();
     }
 
     void OnPlayClicked()
     {
+        if (!IsCutAnimationEnabled()) return;
         SetPlayActive(!playActive);
     }
 
     void OnStepByStepClicked()
     {
+        if (!IsCutAnimationEnabled()) return;
         SetStepByStepActive(!stepByStepActive);
     }
 
     void SetPlayActive(bool active)
     {
+        if (!IsCutAnimationEnabled())
+            active = false;
+
         if (active)
         {
             if (createPolygon == null || seedPoints.Count == 0)
@@ -274,6 +336,9 @@ public class Voronoi_Configuration : MonoBehaviour
 
         playActive = active;
         SetSelected(playPlaybackButton, playActive);
+        SetUIEnabled(dragToolButton, !playActive);
+        if (playActive)
+            drawAreaInteraction?.CancelActiveDrag();
     }
 
     void SetStepByStepActive(bool active)
@@ -336,7 +401,12 @@ public class Voronoi_Configuration : MonoBehaviour
         cellFillMode = mode;
         SetSelected(wireframeFillButton, mode == CellFillMode.Wireframe);
         SetSelected(solidFillButton, mode == CellFillMode.Solid);
-        SetSelected(dynamicFillButton, mode == CellFillMode.Dynamic);
+        SetSelected(radialFillButton, mode == CellFillMode.Radial);
+
+        if (createPolygon == null) return;
+        createPolygon.SetCellFillMode(mode);
+        if (seedPoints.Count > 0)
+            RedrawPreserveProgressOrFinal();
     }
 
     void OnRandomGenerateClicked()
@@ -366,7 +436,7 @@ public class Voronoi_Configuration : MonoBehaviour
         SyncSeedPointsToBackend();
     }
 
-    public void SyncSeedPointsToBackend(bool clearOnly = false)
+    void SyncSeedPointsToBackend(bool clearOnly = false)
     {
         if (createPolygon == null) return;
         if (clearOnly || seedPoints.Count == 0)
@@ -377,10 +447,7 @@ public class Voronoi_Configuration : MonoBehaviour
         createPolygon.ClearSeedPoints();
         foreach (Vector2 p in seedPoints)
             createPolygon.TryAddSeedPoint(p, DrawAreaSeedInteraction.PickRadius);
-        if (cursorMode == CursorToolMode.Drag)
-            createPolygon.RebuildVoronoiFastPreview();
-        else
-            createPolygon.RebuildVoronoiStepMode();
+        RefreshVoronoiDisplay();
     }
 
     static void SetUIEnabled(Component c, bool enabled)

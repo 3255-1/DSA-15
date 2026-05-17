@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -11,8 +12,11 @@ public class DrawAreaSeedInteraction : MonoBehaviour
 
     CreatePolygon createPolygon;
     RawImage drawAreaRawImage;
-    Voronoi_Configuration config;
     List<Vector2> seedPoints;
+    Func<CursorToolMode> getCursorMode;
+    Func<bool> isCutAnimationEnabled;
+    Func<bool> canDragSeeds;
+    Action onSeedPointsChanged;
 
     int dragPointIndex = -1;
     bool isDraggingSeed;
@@ -20,18 +24,36 @@ public class DrawAreaSeedInteraction : MonoBehaviour
     Camera dragEventCamera;
 
     public bool IsDragging => isDraggingSeed;
-    public CursorToolMode CursorMode => config != null ? config.CursorMode : CursorToolMode.View;
+    public CursorToolMode CursorMode =>
+        getCursorMode != null ? getCursorMode() : CursorToolMode.View;
 
     public void Init(
-        Voronoi_Configuration configuration,
         List<Vector2> seedPointList,
         CreatePolygon polygon,
-        RawImage rawImage)
+        RawImage rawImage,
+        Func<CursorToolMode> cursorModeProvider,
+        Func<bool> cutAnimationEnabledProvider,
+        Func<bool> dragAllowedProvider,
+        Action seedPointsChangedHandler)
     {
-        config = configuration;
         seedPoints = seedPointList;
         createPolygon = polygon;
         drawAreaRawImage = rawImage;
+        getCursorMode = cursorModeProvider;
+        isCutAnimationEnabled = cutAnimationEnabledProvider;
+        canDragSeeds = dragAllowedProvider;
+        onSeedPointsChanged = seedPointsChangedHandler;
+    }
+
+    bool IsDragAllowed() => canDragSeeds == null || canDragSeeds();
+
+    bool UsesStepPlayback() =>
+        isCutAnimationEnabled == null || isCutAnimationEnabled();
+
+    public void CancelActiveDrag()
+    {
+        if (!isDraggingSeed) return;
+        EndSeedDrag();
     }
 
     public void HandlePointerDown(PointerEventData eventData)
@@ -51,6 +73,7 @@ public class DrawAreaSeedInteraction : MonoBehaviour
         if (CursorMode == CursorToolMode.Drag
             && eventData.button == PointerEventData.InputButton.Left)
         {
+            if (!IsDragAllowed()) return;
             EnsureSeedPointsSyncedFromBackend();
             dragEventCamera = eventData.pressEventCamera;
             dragPointIndex = FindNearestSeedIndex(mapPoint, DragPickRadius);
@@ -65,6 +88,11 @@ public class DrawAreaSeedInteraction : MonoBehaviour
 
     public void HandleDrag(PointerEventData eventData)
     {
+        if (!IsDragAllowed())
+        {
+            CancelActiveDrag();
+            return;
+        }
         if (!isDraggingSeed || dragPointIndex < 0 || createPolygon == null) return;
 
         dragEventCamera = eventData.pressEventCamera;
@@ -125,7 +153,7 @@ public class DrawAreaSeedInteraction : MonoBehaviour
         if (HasPointNear(mapPoint)) return;
 
         seedPoints.Add(mapPoint);
-        config.SyncSeedPointsToBackend();
+        onSeedPointsChanged?.Invoke();
     }
 
     void TryDeleteSeedAt(Vector2 mapPoint)
@@ -134,11 +162,7 @@ public class DrawAreaSeedInteraction : MonoBehaviour
         if (idx < 0) return;
 
         seedPoints.RemoveAt(idx);
-        createPolygon.TryRemoveSeedPointNear(mapPoint, PickRadius);
-        if (seedPoints.Count == 0)
-            createPolygon.ClearSeedPoints();
-        else
-            createPolygon.RebuildVoronoiStepMode();
+        onSeedPointsChanged?.Invoke();
     }
 
     void ApplyDragPosition(int index, Vector2 mapPoint, bool forcePreview)
@@ -149,7 +173,19 @@ public class DrawAreaSeedInteraction : MonoBehaviour
 
         if (!forcePreview && Time.unscaledTime < nextDragPreviewTime) return;
         nextDragPreviewTime = Time.unscaledTime + DragPreviewInterval;
-        createPolygon.RebuildVoronoiFastPreview();
+
+        if (UsesStepPlayback())
+            createPolygon.RebuildVoronoiFastPreviewAtProgress();
+        else
+            createPolygon.RebuildVoronoiFastPreview();
+    }
+
+    void RefreshDisplayAfterSeedMove()
+    {
+        if (UsesStepPlayback())
+            createPolygon.RebuildVoronoiPreservePlaybackProgress();
+        else
+            createPolygon.ShowFinalVoronoiState();
     }
 
     void EndSeedDrag()
@@ -159,10 +195,7 @@ public class DrawAreaSeedInteraction : MonoBehaviour
         isDraggingSeed = false;
         dragEventCamera = null;
         if (dragPointIndex >= 0 && createPolygon != null)
-        {
-            createPolygon.RebuildVoronoiFastPreview();
-            createPolygon.FinishDragDisplay();
-        }
+            RefreshDisplayAfterSeedMove();
         dragPointIndex = -1;
     }
 

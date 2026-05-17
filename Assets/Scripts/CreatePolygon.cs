@@ -43,8 +43,12 @@ public class CreatePolygon : MonoBehaviour
     private int currentStepIdx = -1;
     private bool restNextStep = false;
     private bool fastPreviewMode = false;
+    private CellFillMode cellFillMode = CellFillMode.Radial;
+    static readonly Color WireframeFillColor = new Color(0xDB / 255f, 0xDB / 255f, 0xDB / 255f, 1f);
 
     public IReadOnlyList<Vector2> SeedPoints => randomPoints;
+
+    public void SetCellFillMode(CellFillMode mode) => cellFillMode = mode;
     public bool AllowsStepPlayback => !fastPreviewMode;
     public bool HasSeedPoints => randomPoints.Count > 0;
 
@@ -70,6 +74,52 @@ public class CreatePolygon : MonoBehaviour
         ClearAllCellMeshes();
         ClearBorderlineFrom(0);
         UpdateVisualization();
+    }
+
+    public void ShowFinalVoronoiState()
+    {
+        fastPreviewMode = false;
+        bisectorLineRenderer.positionCount = 0;
+        connectionLineRenderer.positionCount = 0;
+        meshFilter.mesh = new Mesh();
+        if (lineRenderer != null) lineRenderer.positionCount = 0;
+
+        if (randomPoints.Count == 0)
+        {
+            ClearVoronoiMeshes();
+            return;
+        }
+
+        EnsureCellMeshes(randomPoints.Count);
+        CreateBorderlines(randomPoints.Count);
+        ClearAllCellMeshes();
+        ClearAllBorderlines();
+
+        voronoiResult = new Voronoi(new List<Vector2>(randomPoints), mapWidth, mapHeight);
+        AssignGraphColors(voronoiResult.neighborLists);
+
+        for (int i = 0; i < meshs.Count; i++)
+        {
+            MeshFilter mf = meshs[i].GetComponent<MeshFilter>();
+            Color color = GetCellColor(i);
+            Polygon cell = i < voronoiResult.cells.Count ? voronoiResult.cells[i] : null;
+            if (cell != null && cell.vertices != null && cell.vertices.Count >= 3)
+            {
+                mf.mesh = CreatePolygonMesh(cell.vertices, color, randomPoints[i]);
+                DrawBorderline(cell.vertices);
+                CopyBorderline(i);
+            }
+            else
+            {
+                mf.mesh = new Mesh();
+                if (i < borderlines.Count) borderlines[i].positionCount = 0;
+            }
+        }
+
+        if (lineRenderer != null) lineRenderer.positionCount = 0;
+        currentCellIdx = randomPoints.Count;
+        currentStepIdx = -2;
+        restNextStep = true;
     }
 
     void Start()
@@ -207,37 +257,239 @@ public class CreatePolygon : MonoBehaviour
 
         for (int i = 0; i < meshs.Count; i++)
         {
-            MeshFilter mf = meshs[i].GetComponent<MeshFilter>();
-            Color color = i < cellColors.Count ? cellColors[i] : polygonColor;
-            if (i < cells.Count && cells[i] != null && cells[i].vertices.Count >= 3)
-            {
-                mf.mesh = CreatePolygonMesh(cells[i].vertices, color, randomPoints[i]);
-                DrawBorderline(cells[i].vertices);
-                CopyBorderline(i);
-                if (lineRenderer != null) lineRenderer.positionCount = 0;
-            }
+            if (i < cells.Count)
+                DrawCellFromComputePreview(i, cells[i]);
             else
             {
-                mf.mesh = new Mesh();
-                if (i < borderlines.Count) borderlines[i].positionCount = 0;
+                ClearCellMesh(i);
+                ClearBorderline(i);
             }
         }
     }
 
-    public void FinishDragDisplay()
+    public void RebuildVoronoiFastPreviewAtProgress()
+    {
+        fastPreviewMode = true;
+        bisectorLineRenderer.positionCount = 0;
+        connectionLineRenderer.positionCount = 0;
+
+        if (randomPoints.Count == 0)
+        {
+            ClearVoronoiMeshes();
+            return;
+        }
+
+        int savedCell = voronoiResult != null ? currentCellIdx : 0;
+        int savedStep = voronoiResult != null ? currentStepIdx : -1;
+        bool savedRest = voronoiResult != null && restNextStep;
+
+        EnsureCellMeshes(randomPoints.Count);
+        CreateBorderlines(randomPoints.Count);
+        ClearAllCellMeshes();
+        ClearAllBorderlines();
+        meshFilter.mesh = new Mesh();
+        if (lineRenderer != null) lineRenderer.positionCount = 0;
+
+        List<Polygon> cells = Voronoi.ComputeCells(randomPoints, mapWidth, mapHeight);
+        if (cellColors.Count < randomPoints.Count)
+            AssignGraphColors(cells);
+
+        int n = randomPoints.Count;
+
+        if (savedRest && savedCell >= n)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                if (i < cells.Count)
+                    DrawCellFromComputePreview(i, cells[i]);
+            }
+            currentCellIdx = savedCell;
+            currentStepIdx = savedStep;
+            restNextStep = true;
+            return;
+        }
+
+        savedCell = Mathf.Clamp(savedCell, 0, n - 1);
+        currentCellIdx = savedCell;
+        currentStepIdx = savedStep;
+        restNextStep = savedRest;
+
+        for (int c = 0; c < savedCell; c++)
+        {
+            if (c < cells.Count)
+                DrawCellFromComputePreview(c, cells[c]);
+        }
+
+        if (savedStep == -2)
+            return;
+
+        if (savedStep == -1)
+        {
+            DrawBoundingBoxOnMeshFilter(savedCell);
+            return;
+        }
+
+        if (savedCell < cells.Count)
+            DrawCurrentCellOnMeshFilter(savedCell, cells[savedCell]);
+    }
+
+    void DrawCellFromComputePreview(int cellIndex, Polygon cell)
+    {
+        if (cellIndex < 0 || cellIndex >= meshs.Count) return;
+        if (cell == null || cell.vertices == null || cell.vertices.Count < 3)
+        {
+            ClearCellMesh(cellIndex);
+            ClearBorderline(cellIndex);
+            return;
+        }
+
+        Color color = GetCellColor(cellIndex);
+        meshs[cellIndex].GetComponent<MeshFilter>().mesh =
+            CreatePolygonMesh(cell.vertices, color, randomPoints[cellIndex]);
+        DrawBorderline(cell.vertices);
+        CopyBorderline(cellIndex);
+        if (lineRenderer != null) lineRenderer.positionCount = 0;
+    }
+
+    void DrawBoundingBoxOnMeshFilter(int cellIndex)
+    {
+        Vector2 b1 = new Vector2(-mapWidth, -mapHeight);
+        Vector2 b2 = new Vector2(mapWidth, -mapHeight);
+        Vector2 b3 = new Vector2(mapWidth, mapHeight);
+        Vector2 b4 = new Vector2(-mapWidth, mapHeight);
+        List<Vector2> bbox = new List<Vector2> { b1, b2, b3, b4 };
+        Color color = GetCellColor(cellIndex);
+        meshFilter.mesh = CreatePolygonMesh(bbox, color, randomPoints[cellIndex]);
+    }
+
+    void DrawCurrentCellOnMeshFilter(int cellIndex, Polygon cell)
+    {
+        if (cell == null || cell.vertices == null || cell.vertices.Count < 3)
+        {
+            meshFilter.mesh = new Mesh();
+            return;
+        }
+
+        Color color = GetCellColor(cellIndex);
+        meshFilter.mesh = CreatePolygonMesh(cell.vertices, color, randomPoints[cellIndex]);
+    }
+
+    public void RebuildVoronoiPreservePlaybackProgress()
     {
         fastPreviewMode = false;
         bisectorLineRenderer.positionCount = 0;
         connectionLineRenderer.positionCount = 0;
+
+        if (randomPoints.Count == 0)
+        {
+            ClearVoronoiMeshes();
+            return;
+        }
+
+        int savedCell = voronoiResult != null ? currentCellIdx : 0;
+        int savedStep = voronoiResult != null ? currentStepIdx : -1;
+        bool savedRest = voronoiResult != null && restNextStep;
+
+        EnsureCellMeshes(randomPoints.Count);
+        CreateBorderlines(randomPoints.Count);
+        ClearAllCellMeshes();
+        ClearAllBorderlines();
         meshFilter.mesh = new Mesh();
         if (lineRenderer != null) lineRenderer.positionCount = 0;
-        voronoiResult = null;
 
+        voronoiResult = new Voronoi(new List<Vector2>(randomPoints), mapWidth, mapHeight);
+        AssignGraphColors(voronoiResult.neighborLists);
+
+        int n = voronoiResult.pts.Count;
+        if (n == 0) return;
+
+        if (savedRest && savedCell >= n)
+        {
+            for (int i = 0; i < n; i++)
+                FinalizeCellMesh(i);
+            currentCellIdx = savedCell;
+            currentStepIdx = savedStep;
+            restNextStep = true;
+            return;
+        }
+
+        savedCell = Mathf.Clamp(savedCell, 0, n - 1);
+        restNextStep = savedRest;
+
+        for (int c = 0; c < savedCell; c++)
+            FinalizeCellMesh(c);
+
+        currentCellIdx = savedCell;
+        currentStepIdx = savedStep;
+        UpdateVisualization();
+    }
+
+    public void RefreshCellFillAtCurrentProgress()
+    {
         if (randomPoints.Count == 0) return;
 
-        currentCellIdx = randomPoints.Count;
-        currentStepIdx = -2;
-        restNextStep = true;
+        if (voronoiResult == null)
+        {
+            RebuildVoronoiStepMode();
+            return;
+        }
+
+        if (fastPreviewMode)
+        {
+            RebuildVoronoiFastPreviewAtProgress();
+            return;
+        }
+
+        bisectorLineRenderer.positionCount = 0;
+        connectionLineRenderer.positionCount = 0;
+
+        int n = voronoiResult.pts.Count;
+        if (n == 0) return;
+
+        if (restNextStep && currentCellIdx >= n)
+        {
+            ClearAllCellMeshes();
+            ClearAllBorderlines();
+            meshFilter.mesh = new Mesh();
+            if (lineRenderer != null) lineRenderer.positionCount = 0;
+            for (int i = 0; i < n; i++)
+                FinalizeCellMesh(i);
+            return;
+        }
+
+        int cell = Mathf.Clamp(currentCellIdx, 0, n - 1);
+        ClearCellMeshesFrom(0);
+        ClearBorderlineFrom(0);
+        for (int c = 0; c < cell; c++)
+            FinalizeCellMesh(c);
+
+        UpdateVisualization();
+    }
+
+    void FinalizeCellMesh(int cellIndex)
+    {
+        if (voronoiResult == null || cellIndex < 0 || cellIndex >= meshs.Count) return;
+
+        Polygon poly = null;
+        List<CutStep> steps = voronoiResult.stepLists[cellIndex];
+        if (steps != null && steps.Count > 0)
+            poly = steps[steps.Count - 1].currentPolygon;
+        else if (cellIndex < voronoiResult.cells.Count)
+            poly = voronoiResult.cells[cellIndex];
+
+        if (poly == null || poly.vertices == null || poly.vertices.Count < 3)
+        {
+            ClearCellMesh(cellIndex);
+            ClearBorderline(cellIndex);
+            return;
+        }
+
+        Color color = GetCellColor(cellIndex);
+        meshs[cellIndex].GetComponent<MeshFilter>().mesh =
+            CreatePolygonMesh(poly.vertices, color, randomPoints[cellIndex]);
+        DrawBorderline(poly.vertices);
+        CopyBorderline(cellIndex);
+        if (lineRenderer != null) lineRenderer.positionCount = 0;
     }
 
     void GenerateNewVoronoi()
@@ -713,12 +965,54 @@ public class CreatePolygon : MonoBehaviour
         }
     }
 
-    Mesh CreatePolygonMesh(List<Vector2> vertices, Color centerColor, Vector2 seedPoint)
+    Mesh CreatePolygonMesh(List<Vector2> vertices, Color fillColor, Vector2 seedPoint)
+    {
+        if (vertices == null || vertices.Count < 3)
+            return new Mesh();
+
+        switch (cellFillMode)
+        {
+            case CellFillMode.Wireframe:
+                return CreateSolidMesh(vertices, WireframeFillColor);
+            case CellFillMode.Solid:
+                return CreateSolidMesh(vertices, fillColor);
+            default:
+                return CreateRadialMesh(vertices, fillColor, seedPoint);
+        }
+    }
+
+    static Mesh CreateSolidMesh(List<Vector2> vertices, Color fillColor)
+    {
+        Mesh mesh = new Mesh();
+        Vector3[] v3 = new Vector3[vertices.Count];
+        Color[] colors = new Color[vertices.Count];
+        for (int i = 0; i < vertices.Count; i++)
+        {
+            v3[i] = new Vector3(vertices[i].x, vertices[i].y, 0);
+            colors[i] = fillColor;
+        }
+
+        List<int> triangles = new List<int>();
+        for (int i = 1; i < vertices.Count - 1; i++)
+        {
+            triangles.Add(0);
+            triangles.Add(i);
+            triangles.Add(i + 1);
+        }
+
+        mesh.vertices = v3;
+        mesh.triangles = triangles.ToArray();
+        mesh.colors = colors;
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    static Mesh CreateRadialMesh(List<Vector2> vertices, Color centerColor, Vector2 seedPoint)
     {
         Mesh mesh = new Mesh();
         Vector3[] v3 = new Vector3[vertices.Count + 1];
         Color[] colors = new Color[vertices.Count + 1];
-        
+
         v3[0] = new Vector3(seedPoint.x, seedPoint.y, 0);
         colors[0] = centerColor;
 
