@@ -53,7 +53,7 @@ public class geofunc{
         lines = lines.OrderBy(l => l.angle).ToList();
         List<Line> uLines = new List<Line>();
         for(int i = 0; i < lines.Count; i++) {
-            if (logAngles) Debug.Log(i+" angle:"+lines[i].angle);
+            // if (logAngles) Debug.Log(i+" angle:"+lines[i].angle);
             if (i > 0 && Mathf.Abs(lines[i].angle - lines[i - 1].angle) < 1e-6f) {
                 if (IsRight(lines[i], uLines[uLines.Count - 1].s)) {
                     uLines[uLines.Count - 1] = lines[i];
@@ -157,7 +157,7 @@ public class Voronoi{
         this.stepLists = new List<List<CutStep>>();
         this.neighborLists = new List<List<int>>();
         int sz = pts.Count;
-        Debug.Log("sz: "+sz);
+        // Debug.Log("sz: "+sz);
 
         Vector2 b1 = new Vector2(-mx, -my);
         Vector2 b2 = new Vector2(mx, -my);
@@ -189,10 +189,10 @@ public class Voronoi{
                 }
                 if(isedge){
                     steps.Add(new CutStep(j, bc, new Polygon(ans)));
-                    Debug.Log("pt "+i+": add pt"+j);
+                    // Debug.Log("pt "+i+": add pt"+j);
                 }
             }
-            Debug.Log("anssz: "+ ans.Count);
+            // Debug.Log("anssz: "+ ans.Count);
 
             stepLists.Add(steps);
 
