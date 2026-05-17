@@ -171,10 +171,10 @@ public class CreatePolygon : MonoBehaviour
         }
         EnsureCellMeshes(randomPoints.Count);
         CreateBorderlines(randomPoints.Count);
-        EnsureCellColors(randomPoints.Count);
         ClearAllCellMeshes();
         ClearAllBorderlines();
         voronoiResult = new Voronoi(new List<Vector2>(randomPoints), mapWidth, mapHeight);
+        AssignGraphColors(voronoiResult.neighborLists);
         currentCellIdx = 0;
         currentStepIdx = -1;
         restNextStep = false;
@@ -196,9 +196,15 @@ public class CreatePolygon : MonoBehaviour
         }
 
         EnsureCellMeshes(randomPoints.Count);
-        EnsureCellColors(randomPoints.Count);
         CreateBorderlines(randomPoints.Count);
         List<Polygon> cells = Voronoi.ComputeCells(randomPoints, mapWidth, mapHeight);
+        
+        // 拖曳時 (FastPreview) 固定顏色，不再重新計算圖論著色，除非有缺顏色
+        if (cellColors.Count < randomPoints.Count)
+        {
+            AssignGraphColors(cells);
+        }
+
         for (int i = 0; i < meshs.Count; i++)
         {
             MeshFilter mf = meshs[i].GetComponent<MeshFilter>();
@@ -327,27 +333,131 @@ public class CreatePolygon : MonoBehaviour
         }
     }
 
-    void EnsureCellColors(int count)
+    void AssignGraphColors(List<Polygon> cells)
     {
-        while (cellColors.Count < count)
-            cellColors.Add(NewCellColor());
-        if (cellColors.Count > count)
-            cellColors.RemoveRange(count, cellColors.Count - count);
+        List<List<int>> adj = new List<List<int>>();
+        for (int i = 0; i < randomPoints.Count; i++)
+        {
+            List<int> neighbors = new List<int>();
+            if (i < cells.Count && cells[i] != null && cells[i].edges != null)
+            {
+                foreach (Line l in cells[i].edges)
+                {
+                    if (l.id != -1) neighbors.Add(l.id);
+                }
+            }
+            adj.Add(neighbors);
+        }
+        AssignGraphColors(adj);
+    }
+
+    void AssignGraphColors(List<List<int>> adj)
+    {
+        while (cellColors.Count < randomPoints.Count) cellColors.Add(Color.clear);
+        if (cellColors.Count > randomPoints.Count) cellColors.RemoveRange(randomPoints.Count, cellColors.Count - randomPoints.Count);
+
+        Color[] Palette = new Color[] {
+            new Color(1f, 0.2f, 0.3f, 0.8f),   // Neon Red
+            new Color(0.2f, 1f, 0.4f, 0.8f),   // Neon Green
+            new Color(0.2f, 0.6f, 1f, 0.8f),   // Neon Blue
+            new Color(1f, 0.9f, 0.2f, 0.8f),   // Neon Yellow
+            new Color(0.8f, 0.2f, 1f, 0.8f)    // Neon Purple
+        };
+
+        int[] globalUsage = new int[Palette.Length];
+
+        for (int i = 0; i < randomPoints.Count; i++)
+        {
+            List<int> neighbors = i < adj.Count ? adj[i] : new List<int>();
+            bool[] used = new bool[Palette.Length];
+            
+            foreach (int n in neighbors)
+            {
+                if (n != i && n < cellColors.Count && cellColors[n] != Color.clear)
+                {
+                    float minDiff = float.MaxValue;
+                    int bestP = 0;
+                    for (int p = 0; p < Palette.Length; p++)
+                    {
+                        float h1,s1,v1, h2,s2,v2;
+                        Color.RGBToHSV(cellColors[n], out h1, out s1, out v1);
+                        Color.RGBToHSV(Palette[p], out h2, out s2, out v2);
+                        float diff = Mathf.Abs(h1 - h2);
+                        if (diff > 0.5f) diff = 1f - diff;
+                        if (diff < minDiff) { minDiff = diff; bestP = p; }
+                    }
+                    if (minDiff < 0.1f) used[bestP] = true;
+                }
+            }
+
+            bool keptExisting = false;
+            if (cellColors[i] != Color.clear)
+            {
+                float minDiff = float.MaxValue;
+                int currentP = 0;
+                for (int p = 0; p < Palette.Length; p++)
+                {
+                    float h1,s1,v1, h2,s2,v2;
+                    Color.RGBToHSV(cellColors[i], out h1, out s1, out v1);
+                    Color.RGBToHSV(Palette[p], out h2, out s2, out v2);
+                    float diff = Mathf.Abs(h1 - h2);
+                    if (diff > 0.5f) diff = 1f - diff;
+                    if (diff < minDiff) { minDiff = diff; currentP = p; }
+                }
+                if (!used[currentP]) 
+                {
+                    keptExisting = true;
+                    globalUsage[currentP]++;
+                }
+            }
+
+            if (keptExisting) continue;
+
+            int chosenP = -1;
+            int minUsage = int.MaxValue;
+            int startIdx = UnityEngine.Random.Range(0, Palette.Length);
+            
+            for (int offset = 0; offset < Palette.Length; offset++)
+            {
+                int p = (startIdx + offset) % Palette.Length;
+                if (!used[p]) 
+                { 
+                    if (globalUsage[p] < minUsage)
+                    {
+                        minUsage = globalUsage[p];
+                        chosenP = p;
+                    }
+                }
+            }
+
+            // 平面圖四色定理保證通常不會全滿，但萬一真的被包圍，強制選一個最少用的，無視 used
+            if (chosenP == -1) 
+            {
+                minUsage = int.MaxValue;
+                for (int p = 0; p < Palette.Length; p++)
+                {
+                    if (globalUsage[p] < minUsage)
+                    {
+                        minUsage = globalUsage[p];
+                        chosenP = p;
+                    }
+                }
+            }
+
+            globalUsage[chosenP]++;
+
+            float h, s, v;
+            Color.RGBToHSV(Palette[chosenP], out h, out s, out v);
+            h = Mathf.Repeat(h + UnityEngine.Random.Range(-0.03f, 0.03f), 1f);
+            Color finalColor = Color.HSVToRGB(h, s, v);
+            finalColor.a = 0.8f;
+            cellColors[i] = finalColor;
+        }
     }
 
     Color GetCellColor(int cellIndex)
     {
-        EnsureCellColors(cellIndex + 1);
-        return cellColors[cellIndex];
-    }
-
-    static Color NewCellColor()
-    {
-        return new Color(
-            UnityEngine.Random.Range(0.3f, 1f),
-            UnityEngine.Random.Range(0.3f, 1f),
-            UnityEngine.Random.Range(0.3f, 1f),
-            0.8f);
+        return cellIndex < cellColors.Count ? cellColors[cellIndex] : Color.white;
     }
 
     void RefreshSeedPointMarkers()
