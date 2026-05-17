@@ -178,8 +178,9 @@ public class CreatePolygon : MonoBehaviour
         {
             MeshFilter mf = meshs[i].GetComponent<MeshFilter>();
             Color color = i < cellColors.Count ? cellColors[i] : polygonColor;
-            if (i < cells.Count && cells[i] != null && cells[i].vertices.Count >= 3){
-                mf.mesh = CreatePolygonMesh(cells[i].vertices, color);
+            if (i < cells.Count && cells[i] != null && cells[i].vertices.Count >= 3)
+            {
+                mf.mesh = CreatePolygonMesh(cells[i].vertices, color, randomPoints[i]);
                 DrawBorderline(cells[i].vertices);
                 CopyBorderline(i);
                 lineRenderer.positionCount=0;
@@ -505,8 +506,8 @@ public class CreatePolygon : MonoBehaviour
         if (polyToDraw != null && polyToDraw.vertices != null && polyToDraw.vertices.Count >= 3)
         {
             Color stepColor = GetCellColor(currentCellIdx);
-            Mesh previewMesh = CreatePolygonMesh(polyToDraw.vertices, stepColor);
-            DrawBorderline(polyToDraw.vertices);
+            Vector2 seedPt = voronoiResult.pts[currentCellIdx];
+            Mesh previewMesh = CreatePolygonMesh(polyToDraw.vertices, stepColor, seedPt);
             if (currentStepIdx >= 0 && steps != null && currentStepIdx == steps.Count - 1)
             {
                 meshs[currentCellIdx].GetComponent<MeshFilter>().mesh = previewMesh;
@@ -551,23 +552,30 @@ public class CreatePolygon : MonoBehaviour
         }
     }
 
-    Mesh CreatePolygonMesh(List<Vector2> vertices, Color color)
+    Mesh CreatePolygonMesh(List<Vector2> vertices, Color centerColor, Vector2 seedPoint)
     {
         Mesh mesh = new Mesh();
-        Vector3[] v3 = new Vector3[vertices.Count];
-        Color[] colors = new Color[vertices.Count];
+        Vector3[] v3 = new Vector3[vertices.Count + 1];
+        Color[] colors = new Color[vertices.Count + 1];
+        
+        v3[0] = new Vector3(seedPoint.x, seedPoint.y, 0);
+        colors[0] = centerColor;
+
         for (int i = 0; i < vertices.Count; i++)
         {
-            v3[i] = new Vector3(vertices[i].x, vertices[i].y, 0);
-            colors[i] = color;
+            v3[i + 1] = new Vector3(vertices[i].x, vertices[i].y, 0);
+            colors[i + 1] = Color.black;
         }
+
         List<int> triangles = new List<int>();
-        for (int i = 1; i < vertices.Count - 1; i++)
+        for (int i = 0; i < vertices.Count; i++)
         {
             triangles.Add(0);
-            triangles.Add(i);
             triangles.Add(i + 1);
+            int nextIdx = (i + 1) % vertices.Count + 1;
+            triangles.Add(nextIdx);
         }
+
         mesh.vertices = v3;
         mesh.triangles = triangles.ToArray();
         mesh.colors = colors;
