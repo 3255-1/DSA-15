@@ -17,6 +17,8 @@ public class DrawAreaSeedInteraction : MonoBehaviour
     Func<bool> isCutAnimationEnabled;
     Func<bool> canDragSeeds;
     Action onSeedPointsChanged;
+    Func<bool> isAtSeedLimit;
+    Action onInvalid;
 
     int dragPointIndex = -1;
     bool isDraggingSeed;
@@ -34,7 +36,9 @@ public class DrawAreaSeedInteraction : MonoBehaviour
         Func<CursorToolMode> cursorModeProvider,
         Func<bool> cutAnimationEnabledProvider,
         Func<bool> dragAllowedProvider,
-        Action seedPointsChangedHandler)
+        Action seedPointsChangedHandler,
+        Func<bool> seedLimitProvider,
+        Action invalidHandler)
     {
         seedPoints = seedPointList;
         createPolygon = polygon;
@@ -43,6 +47,8 @@ public class DrawAreaSeedInteraction : MonoBehaviour
         isCutAnimationEnabled = cutAnimationEnabledProvider;
         canDragSeeds = dragAllowedProvider;
         onSeedPointsChanged = seedPointsChangedHandler;
+        isAtSeedLimit = seedLimitProvider;
+        onInvalid = invalidHandler;
     }
 
     bool IsDragAllowed() => canDragSeeds == null || canDragSeeds();
@@ -149,8 +155,21 @@ public class DrawAreaSeedInteraction : MonoBehaviour
     void TryAddSeedAt(Vector2 mapPoint)
     {
         if (!IsValidMapPoint(mapPoint)) return;
-        if (!IsInsideMapBounds(mapPoint.x, mapPoint.y)) return;
-        if (HasPointNear(mapPoint)) return;
+        if (isAtSeedLimit != null && isAtSeedLimit())
+        {
+            onInvalid?.Invoke();
+            return;
+        }
+        if (!IsInsideMapBounds(mapPoint.x, mapPoint.y))
+        {
+            onInvalid?.Invoke();
+            return;
+        }
+        if (HasPointNear(mapPoint))
+        {
+            onInvalid?.Invoke();
+            return;
+        }
 
         seedPoints.Add(mapPoint);
         onSeedPointsChanged?.Invoke();

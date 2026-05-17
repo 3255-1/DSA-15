@@ -10,12 +10,15 @@ public enum CellFillMode { Wireframe, Solid, Radial }
 public class Voronoi_Configuration : MonoBehaviour
 {
     const int RandomCountMin = 2;
-    const int RandomCountMax = 50;
+    const int RandomCountMax = 100;
+    const int MaxSeedPoints = 100;
 
     [Header("References")]
     public CreatePolygon createPolygon;
     public RectTransform configPanelRoot;
     public UnityEngine.UI.RawImage drawAreaRawImage;
+    public GameObject invalidToastPrefab;
+    public RectTransform invalidToastParent;
 
     [Header("UI Colors")]
     public Color modeButtonSelectedColor = new Color(0.55f, 0.85f, 1f, 1f);
@@ -43,7 +46,10 @@ public class Voronoi_Configuration : MonoBehaviour
     Button radialFillButton;
     Button playPlaybackButton;
     Button stepPlaybackButton;
+    Button lrButton;
     Button clearAllDiagramButton;
+    Button clearAllSeedPointButton;
+    TextMeshProUGUI totalSeedPointText;
     Toggle enableImpactParticlesToggle;
     Toggle enableCutAnimationToggle;
     Toggle enableBisectorLineToggle;
@@ -66,6 +72,7 @@ public class Voronoi_Configuration : MonoBehaviour
     {
         if (configPanelRoot == null) configPanelRoot = transform as RectTransform;
         if (createPolygon == null) createPolygon = FindFirstObjectByType<CreatePolygon>();
+        EnsureInvalidToastPrefab();
         if (drawAreaRawImage == null)
         {
             Transform drawArea = FindDeep(configPanelRoot.root, "DrawArea");
@@ -83,6 +90,7 @@ public class Voronoi_Configuration : MonoBehaviour
         SelectCursorTool(CursorToolMode.View);
         InitializeAnimationUI();
         SyncSeedPointsToBackend(clearOnly: true);
+        UpdateTotalSeedPointDisplay();
     }
 
     void SetupDrawAreaInput()
@@ -99,7 +107,9 @@ public class Voronoi_Configuration : MonoBehaviour
             () => cursorMode,
             IsCutAnimationEnabled,
             () => !playActive,
-            () => SyncSeedPointsToBackend());
+            () => SyncSeedPointsToBackend(),
+            IsAtSeedLimit,
+            ShowInvalidToast);
 
         DrawAreaInput input = drawAreaRawImage.GetComponent<DrawAreaInput>();
         if (input == null) input = drawAreaRawImage.gameObject.AddComponent<DrawAreaInput>();
@@ -114,15 +124,13 @@ public class Voronoi_Configuration : MonoBehaviour
 
     void UpdateStepByStepInput()
     {
-        if (!IsCutAnimationEnabled()) return;
-        if (!stepByStepActive || createPolygon == null || IsDraggingSeed()) return;
-        if (!createPolygon.AllowsStepPlayback) return;
+        if (!IsCutAnimationEnabled() || createPolygon == null || IsDraggingSeed()) return;
         if (Keyboard.current == null) return;
 
         if (Keyboard.current.leftArrowKey.wasPressedThisFrame)
-            createPolygon.StepBackward();
+            TryStepBackward();
         if (Keyboard.current.rightArrowKey.wasPressedThisFrame)
-            createPolygon.StepForward();
+            TryStepForward();
     }
 
     void UpdateAutoPlay()
@@ -133,6 +141,7 @@ public class Voronoi_Configuration : MonoBehaviour
         if (seedPoints.Count == 0)
         {
             SetPlayActive(false);
+            ShowInvalidToast();
             return;
         }
 
@@ -189,12 +198,20 @@ public class Voronoi_Configuration : MonoBehaviour
         radialFillButton = FindButton(root, "RadialButton");
         playPlaybackButton = FindButton(root, "Play");
         stepPlaybackButton = FindButton(root, "StepByStep");
+        lrButton = FindButton(root, "LR");
+        if (lrButton == null)
+            lrButton = FindButton(root, "LR_Button");
 
         clearAllDiagramButton = FindButton(root, "ClearAllDiagramButton");
         if (clearAllDiagramButton == null)
             clearAllDiagramButton = FindButton(root, "ClearAllDiagram");
         if (clearAllDiagramButton == null)
             clearAllDiagramButton = FindButton(root, "ClearDiagramButton");
+
+        clearAllSeedPointButton = FindButton(root, "ClearAllSeedPoint");
+        Transform totalSeed = FindDeep(root, "TotalSeedPoint");
+        if (totalSeed != null)
+            totalSeedPointText = totalSeed.GetComponent<TextMeshProUGUI>();
 
         enableImpactParticlesToggle = FindComponent<Toggle>(root, "EnableImpactParticleSystem");
         enableCutAnimationToggle = FindComponent<Toggle>(root, "EnableCutAnimation");
@@ -215,6 +232,24 @@ public class Voronoi_Configuration : MonoBehaviour
             if (display != null)
                 speedDisplayText = display.GetComponent<TextMeshProUGUI>();
         }
+
+        SetupSpeedSliderUI(speedRow);
+    }
+
+    void SetupSpeedSliderUI(Transform speedRow)
+    {
+        if (speedRow == null) return;
+
+        LayoutElement layoutElement = speedRow.GetComponent<LayoutElement>();
+        if (layoutElement == null)
+            layoutElement = speedRow.gameObject.AddComponent<LayoutElement>();
+        layoutElement.minHeight = 36f;
+
+        TextMeshProUGUI rowLabel = speedRow.GetComponent<TextMeshProUGUI>();
+        if (rowLabel != null)
+            rowLabel.raycastTarget = false;
+        if (speedDisplayText != null)
+            speedDisplayText.raycastTarget = false;
     }
 
     Transform FindSpeedRow(Transform root)
@@ -246,7 +281,9 @@ public class Voronoi_Configuration : MonoBehaviour
         radialFillButton?.onClick.AddListener(() => SelectCellFill(CellFillMode.Radial));
         playPlaybackButton?.onClick.AddListener(OnPlayClicked);
         stepPlaybackButton?.onClick.AddListener(OnStepByStepClicked);
+        lrButton?.onClick.AddListener(OnLRClicked);
         clearAllDiagramButton?.onClick.AddListener(OnClearAllDiagramClicked);
+        clearAllSeedPointButton?.onClick.AddListener(OnClearAllSeedPointClicked);
 
         speedSlider?.onValueChanged.AddListener(OnSpeedSliderChanged);
         enableCutAnimationToggle?.onValueChanged.AddListener(OnCutAnimationToggleChanged);
@@ -284,6 +321,18 @@ public class Voronoi_Configuration : MonoBehaviour
         createPolygon?.SetGuideLinesVisible(enabled);
     }
 
+    void RefreshVoronoiDisplay()
+    {
+        if (createPolygon == null || seedPoints.Count == 0) return;
+        if (!IsCutAnimationEnabled())
+        {
+            createPolygon.ShowFinalVoronoiState();
+            return;
+        }
+        if (createPolygon.HasDiagramStarted)
+            createPolygon.RefreshCellFillAtCurrentProgress();
+    }
+
     void RedrawPreserveProgressOrFinal()
     {
         if (createPolygon == null || seedPoints.Count == 0) return;
@@ -302,9 +351,9 @@ public class Voronoi_Configuration : MonoBehaviour
     {
         bool animOn = IsCutAnimationEnabled();
         SetUIEnabled(enableImpactParticlesToggle, animOn);
-        SetUIEnabled(speedSlider, animOn);
         SetUIEnabled(playPlaybackButton, animOn);
         SetUIEnabled(stepPlaybackButton, animOn);
+        SetUIEnabled(lrButton, animOn);
 
         if (!animOn)
         {
@@ -316,12 +365,24 @@ public class Voronoi_Configuration : MonoBehaviour
     void OnPlayClicked()
     {
         if (!IsCutAnimationEnabled()) return;
+        if (!playActive && seedPoints.Count == 0)
+        {
+            ShowInvalidToast();
+            return;
+        }
         SetPlayActive(!playActive);
     }
+
+    void OnLRClicked() => OnStepByStepClicked();
 
     void OnStepByStepClicked()
     {
         if (!IsCutAnimationEnabled()) return;
+        if (!stepByStepActive && seedPoints.Count == 0)
+        {
+            ShowInvalidToast();
+            return;
+        }
         SetStepByStepActive(!stepByStepActive);
     }
 
@@ -336,6 +397,7 @@ public class Voronoi_Configuration : MonoBehaviour
             {
                 playActive = false;
                 SetSelected(playPlaybackButton, false);
+                ShowInvalidToast();
                 return;
             }
 
@@ -357,6 +419,7 @@ public class Voronoi_Configuration : MonoBehaviour
     {
         stepByStepActive = active;
         SetSelected(stepPlaybackButton, stepByStepActive);
+        SetSelected(lrButton, stepByStepActive);
         if (active)
             SetPlayActive(false);
     }
@@ -423,8 +486,16 @@ public class Voronoi_Configuration : MonoBehaviour
 
     void OnRandomGenerateClicked()
     {
-        if (randomCountInput == null || !int.TryParse(randomCountInput.text, out int n)) return;
-        if (n < RandomCountMin || n > RandomCountMax) return;
+        if (randomCountInput == null || !int.TryParse(randomCountInput.text, out int n))
+        {
+            ShowInvalidToast();
+            return;
+        }
+        if (n < RandomCountMin || n > RandomCountMax)
+        {
+            ShowInvalidToast();
+            return;
+        }
 
         if (seedMode == SeedPointMode.Random || seedMode == SeedPointMode.Mixed)
         {
@@ -438,23 +509,133 @@ public class Voronoi_Configuration : MonoBehaviour
     void OnManualAddClicked()
     {
         if (manualXInput == null || manualYInput == null || drawAreaInteraction == null) return;
-        if (!float.TryParse(manualXInput.text, out float x)) return;
-        if (!float.TryParse(manualYInput.text, out float y)) return;
-        if (!drawAreaInteraction.IsInsideMapBounds(x, y)) return;
+        if (!float.TryParse(manualXInput.text, out float x))
+        {
+            ShowInvalidToast();
+            return;
+        }
+        if (!float.TryParse(manualYInput.text, out float y))
+        {
+            ShowInvalidToast();
+            return;
+        }
+        if (IsAtSeedLimit())
+        {
+            ShowInvalidToast();
+            return;
+        }
+        if (!drawAreaInteraction.IsInsideMapBounds(x, y))
+        {
+            ShowInvalidToast();
+            return;
+        }
         Vector2 candidate = new Vector2(x, y);
-        if (drawAreaInteraction.HasPointNear(candidate)) return;
+        if (drawAreaInteraction.HasPointNear(candidate))
+        {
+            ShowInvalidToast();
+            return;
+        }
 
         seedPoints.Add(candidate);
         SyncSeedPointsToBackend();
     }
 
+    void TryStepBackward()
+    {
+        if (!IsCutAnimationEnabled()) return;
+        if (seedPoints.Count == 0)
+        {
+            ShowInvalidToast();
+            return;
+        }
+        if (!stepByStepActive || createPolygon == null) return;
+        if (!createPolygon.AllowsStepPlayback) return;
+        createPolygon.StepBackward();
+    }
+
+    void TryStepForward()
+    {
+        if (!IsCutAnimationEnabled()) return;
+        if (seedPoints.Count == 0)
+        {
+            ShowInvalidToast();
+            return;
+        }
+        if (!stepByStepActive || createPolygon == null) return;
+        if (!createPolygon.AllowsStepPlayback) return;
+        createPolygon.StepForward();
+    }
+
     void OnClearAllDiagramClicked()
     {
+        if (seedPoints.Count == 0)
+        {
+            ShowInvalidToast();
+            return;
+        }
+
         drawAreaInteraction?.CancelActiveDrag();
         SetPlayActive(false);
         SetStepByStepActive(false);
         if (createPolygon != null)
             createPolygon.ClearDiagramVisuals();
+    }
+
+    void OnClearAllSeedPointClicked()
+    {
+        if (seedPoints.Count == 0)
+        {
+            ShowInvalidToast();
+            return;
+        }
+
+        drawAreaInteraction?.CancelActiveDrag();
+        SetPlayActive(false);
+        SetStepByStepActive(false);
+        seedPoints.Clear();
+        SyncSeedPointsToBackend(clearOnly: true);
+    }
+
+    bool IsAtSeedLimit() => seedPoints.Count >= MaxSeedPoints;
+
+    void UpdateTotalSeedPointDisplay()
+    {
+        if (totalSeedPointText != null)
+            totalSeedPointText.text = $"Total Seed Point: {seedPoints.Count}/{MaxSeedPoints}";
+    }
+
+    void EnsureInvalidToastPrefab()
+    {
+        if (invalidToastPrefab != null) return;
+        invalidToastPrefab = Resources.Load<GameObject>("Invalid");
+#if UNITY_EDITOR
+        if (invalidToastPrefab == null)
+            invalidToastPrefab = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>(
+                "Assets/Objects/Invalid.prefab");
+#endif
+    }
+
+    void ShowInvalidToast()
+    {
+        EnsureInvalidToastPrefab();
+        if (invalidToastPrefab == null) return;
+
+        Transform parent = invalidToastParent;
+        if (parent == null)
+        {
+            Canvas canvas = configPanelRoot != null
+                ? configPanelRoot.GetComponentInParent<Canvas>()
+                : null;
+            if (canvas == null)
+                canvas = FindFirstObjectByType<Canvas>();
+            parent = canvas != null ? canvas.transform : transform;
+        }
+
+        GameObject instance = Instantiate(invalidToastPrefab, parent);
+        InvalidToast toast = instance.GetComponent<InvalidToast>();
+        if (toast == null)
+            toast = instance.AddComponent<InvalidToast>();
+        toast.Play();
     }
 
     void SyncSeedPointsToBackend(bool clearOnly = false)
@@ -463,14 +644,15 @@ public class Voronoi_Configuration : MonoBehaviour
         if (clearOnly || seedPoints.Count == 0)
         {
             createPolygon.ClearSeedPoints();
+            UpdateTotalSeedPointDisplay();
             return;
         }
         createPolygon.ClearSeedPoints();
         foreach (Vector2 p in seedPoints)
             createPolygon.TryAddSeedPoint(p, DrawAreaSeedInteraction.PickRadius);
 
-        if (!IsCutAnimationEnabled())
-            createPolygon.ShowFinalVoronoiState();
+        RefreshVoronoiDisplay();
+        UpdateTotalSeedPointDisplay();
     }
 
     static void SetUIEnabled(Component c, bool enabled)
@@ -492,7 +674,11 @@ public class Voronoi_Configuration : MonoBehaviour
     static Button FindButton(Transform root, string childName)
     {
         Transform t = FindDeep(root, childName);
-        return t != null ? t.GetComponent<Button>() : null;
+        if (t == null) return null;
+        Button button = t.GetComponent<Button>();
+        if (button == null)
+            button = t.GetComponentInChildren<Button>(true);
+        return button;
     }
 
     static T FindComponent<T>(Transform root, string childName) where T : Component
