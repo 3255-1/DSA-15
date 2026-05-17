@@ -171,6 +171,8 @@ public class DrawAreaSeedInteraction : MonoBehaviour
         if (index >= 0 && index < seedPoints.Count)
             seedPoints[index] = mapPoint;
 
+        if (!createPolygon.HasDiagramStarted) return;
+
         if (!forcePreview && Time.unscaledTime < nextDragPreviewTime) return;
         nextDragPreviewTime = Time.unscaledTime + DragPreviewInterval;
 
@@ -182,6 +184,12 @@ public class DrawAreaSeedInteraction : MonoBehaviour
 
     void RefreshDisplayAfterSeedMove()
     {
+        if (!createPolygon.HasDiagramStarted)
+        {
+            createPolygon.ClearDiagramVisuals();
+            return;
+        }
+
         if (UsesStepPlayback())
             createPolygon.RebuildVoronoiPreservePlaybackProgress();
         else

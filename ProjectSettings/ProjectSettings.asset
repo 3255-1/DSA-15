@@ -13,7 +13,7 @@ PlayerSettings:
   useOnDemandResources: 0
   accelerometerFrequency: 60
   companyName: DefaultCompany
-  productName: Organ
+  productName: Voronoi Diagram Visualization
   defaultCursor: {fileID: 0}
   cursorHotspot: {x: 0, y: 0}
   m_SplashScreenBackgroundColor: {r: 0.13725491, g: 0.12156863, b: 0.1254902, a: 1}
@@ -144,7 +144,8 @@ PlayerSettings:
   visionOSBundleVersion: 1.0
   tvOSBundleVersion: 1.0
   bundleVersion: 1.0
-  preloadedAssets: []
+  preloadedAssets:
+  - {fileID: -944628639613478452, guid: 2bcd2660ca9b64942af0de543d8d7100, type: 3}
   metroInputSource: 0
   wsaTransparentSwapchain: 0
   xboxOneDisableKinectGpuReservation: 1
@@ -605,14 +606,14 @@ PlayerSettings:
   editorAssembliesCompatibilityLevel: 1
   m_RenderingPath: 1
   m_MobileRenderingPath: 1
-  metroPackageName: Organ
+  metroPackageName: VoronoiDiagramVisualization
   metroPackageVersion: 
   metroCertificatePath: 
   metroCertificatePassword: 
   metroCertificateSubject: 
   metroCertificateIssuer: 
   metroCertificateNotAfter: 0000000000000000
-  metroApplicationDescription: Organ
+  metroApplicationDescription: Voronoi Diagram Visualization
   wsaImages: {}
   metroTileShortName: 
   metroTileShowName: 0
@@ -687,7 +688,7 @@ PlayerSettings:
   cloudProjectId: 197ba655-2ef0-4520-9ab7-470cf8bddbe4
   framebufferDepthMemorylessMode: 0
   qualitySettingsNames: []
-  projectName: Organ
+  projectName: Voronoi Diagram Visualization
   organizationId: mhy1031
   cloudEnabled: 0
   legacyClampBlendShapeWeights: 0

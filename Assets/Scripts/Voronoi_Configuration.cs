@@ -10,7 +10,7 @@ public enum CellFillMode { Wireframe, Solid, Radial }
 public class Voronoi_Configuration : MonoBehaviour
 {
     const int RandomCountMin = 2;
-    const int RandomCountMax = 30;
+    const int RandomCountMax = 50;
 
     [Header("References")]
     public CreatePolygon createPolygon;
@@ -34,7 +34,7 @@ public class Voronoi_Configuration : MonoBehaviour
     Button randomGenerateButton;
     TMP_InputField manualXInput;
     TMP_InputField manualYInput;
-    Button manualGenerateButton;
+    Button manualAddButton;
     Button viewToolButton;
     Button editToolButton;
     Button dragToolButton;
@@ -43,8 +43,10 @@ public class Voronoi_Configuration : MonoBehaviour
     Button radialFillButton;
     Button playPlaybackButton;
     Button stepPlaybackButton;
+    Button clearAllDiagramButton;
     Toggle enableImpactParticlesToggle;
     Toggle enableCutAnimationToggle;
+    Toggle enableBisectorLineToggle;
     Slider speedSlider;
     TextMeshProUGUI speedDisplayText;
 
@@ -175,7 +177,7 @@ public class Voronoi_Configuration : MonoBehaviour
             : new TMP_InputField[0];
         if (manualInputs.Length > 0) manualXInput = manualInputs[0];
         if (manualInputs.Length > 1) manualYInput = manualInputs[1];
-        manualGenerateButton = FindButton(manualGroup, "Generate");
+        manualAddButton = FindButton(manualGroup, "Add");
 
         viewToolButton = FindButton(root, "ViewModeButton");
         editToolButton = FindButton(root, "EditModeButton");
@@ -188,8 +190,15 @@ public class Voronoi_Configuration : MonoBehaviour
         playPlaybackButton = FindButton(root, "Play");
         stepPlaybackButton = FindButton(root, "StepByStep");
 
+        clearAllDiagramButton = FindButton(root, "ClearAllDiagramButton");
+        if (clearAllDiagramButton == null)
+            clearAllDiagramButton = FindButton(root, "ClearAllDiagram");
+        if (clearAllDiagramButton == null)
+            clearAllDiagramButton = FindButton(root, "ClearDiagramButton");
+
         enableImpactParticlesToggle = FindComponent<Toggle>(root, "EnableImpactParticleSystem");
         enableCutAnimationToggle = FindComponent<Toggle>(root, "EnableCutAnimation");
+        enableBisectorLineToggle = FindComponent<Toggle>(root, "EnableBisectorLine");
 
         Transform speedRow = FindSpeedRow(root);
         if (speedRow != null)
@@ -225,7 +234,7 @@ public class Voronoi_Configuration : MonoBehaviour
         mixedModeButton?.onClick.AddListener(() => SelectSeedMode(SeedPointMode.Mixed));
 
         randomGenerateButton?.onClick.AddListener(OnRandomGenerateClicked);
-        manualGenerateButton?.onClick.AddListener(OnManualGenerateClicked);
+        manualAddButton?.onClick.AddListener(OnManualAddClicked);
 
         viewToolButton?.onClick.AddListener(() => SelectCursorTool(CursorToolMode.View));
         editToolButton?.onClick.AddListener(() => SelectCursorTool(CursorToolMode.Edit));
@@ -237,9 +246,11 @@ public class Voronoi_Configuration : MonoBehaviour
         radialFillButton?.onClick.AddListener(() => SelectCellFill(CellFillMode.Radial));
         playPlaybackButton?.onClick.AddListener(OnPlayClicked);
         stepPlaybackButton?.onClick.AddListener(OnStepByStepClicked);
+        clearAllDiagramButton?.onClick.AddListener(OnClearAllDiagramClicked);
 
         speedSlider?.onValueChanged.AddListener(OnSpeedSliderChanged);
         enableCutAnimationToggle?.onValueChanged.AddListener(OnCutAnimationToggleChanged);
+        enableBisectorLineToggle?.onValueChanged.AddListener(OnBisectorLineToggleChanged);
     }
 
     void InitializeAnimationUI()
@@ -248,6 +259,8 @@ public class Voronoi_Configuration : MonoBehaviour
             enableImpactParticlesToggle.isOn = true;
         if (enableCutAnimationToggle != null)
             enableCutAnimationToggle.isOn = true;
+        if (enableBisectorLineToggle != null)
+            createPolygon?.SetGuideLinesVisible(enableBisectorLineToggle.isOn);
 
         SelectCellFill(CellFillMode.Solid);
         SetPlayActive(false);
@@ -266,9 +279,19 @@ public class Voronoi_Configuration : MonoBehaviour
         RedrawPreserveProgressOrFinal();
     }
 
+    void OnBisectorLineToggleChanged(bool enabled)
+    {
+        createPolygon?.SetGuideLinesVisible(enabled);
+    }
+
     void RedrawPreserveProgressOrFinal()
     {
         if (createPolygon == null || seedPoints.Count == 0) return;
+        if (!createPolygon.HasDiagramStarted)
+        {
+            createPolygon.ClearDiagramVisuals();
+            return;
+        }
         if (!IsCutAnimationEnabled())
             createPolygon.ShowFinalVoronoiState();
         else
@@ -288,17 +311,6 @@ public class Voronoi_Configuration : MonoBehaviour
             SetPlayActive(false);
             SetStepByStepActive(false);
         }
-    }
-
-    void RefreshVoronoiDisplay()
-    {
-        if (createPolygon == null || seedPoints.Count == 0) return;
-        if (!IsCutAnimationEnabled())
-            createPolygon.ShowFinalVoronoiState();
-        else if (cursorMode == CursorToolMode.Drag)
-            createPolygon.RebuildVoronoiFastPreview();
-        else
-            createPolygon.RebuildVoronoiStepMode();
     }
 
     void OnPlayClicked()
@@ -378,7 +390,7 @@ public class Voronoi_Configuration : MonoBehaviour
         SetUIEnabled(randomGenerateButton, randomOn);
         SetUIEnabled(manualXInput, manualOn);
         SetUIEnabled(manualYInput, manualOn);
-        SetUIEnabled(manualGenerateButton, manualOn);
+        SetUIEnabled(manualAddButton, manualOn);
 
         bool editOn = seedMode == SeedPointMode.Manual || seedMode == SeedPointMode.Mixed;
         SetUIEnabled(viewToolButton, true);
@@ -423,7 +435,7 @@ public class Voronoi_Configuration : MonoBehaviour
         SyncSeedPointsToBackend();
     }
 
-    void OnManualGenerateClicked()
+    void OnManualAddClicked()
     {
         if (manualXInput == null || manualYInput == null || drawAreaInteraction == null) return;
         if (!float.TryParse(manualXInput.text, out float x)) return;
@@ -434,6 +446,15 @@ public class Voronoi_Configuration : MonoBehaviour
 
         seedPoints.Add(candidate);
         SyncSeedPointsToBackend();
+    }
+
+    void OnClearAllDiagramClicked()
+    {
+        drawAreaInteraction?.CancelActiveDrag();
+        SetPlayActive(false);
+        SetStepByStepActive(false);
+        if (createPolygon != null)
+            createPolygon.ClearDiagramVisuals();
     }
 
     void SyncSeedPointsToBackend(bool clearOnly = false)
@@ -447,7 +468,9 @@ public class Voronoi_Configuration : MonoBehaviour
         createPolygon.ClearSeedPoints();
         foreach (Vector2 p in seedPoints)
             createPolygon.TryAddSeedPoint(p, DrawAreaSeedInteraction.PickRadius);
-        RefreshVoronoiDisplay();
+
+        if (!IsCutAnimationEnabled())
+            createPolygon.ShowFinalVoronoiState();
     }
 
     static void SetUIEnabled(Component c, bool enabled)
