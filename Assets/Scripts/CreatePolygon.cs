@@ -135,6 +135,7 @@ public class CreatePolygon : MonoBehaviour
     {
         if (Keyboard.current == null) return;
         if (Keyboard.current.rKey.wasPressedThisFrame) GenerateNewVoronoi();
+        if (Keyboard.current.spaceKey.wasPressedThisFrame) ShowFinalVoronoiState();
     }
 
     public bool StepForward() => NextStep();
@@ -805,10 +806,10 @@ public class CreatePolygon : MonoBehaviour
             currentCellIdx++;
             if (currentCellIdx >= voronoiResult.pts.Count)
             {
-                restNextStep = true;
                 bisectorLineRenderer.positionCount = 0;
                 connectionLineRenderer.positionCount = 0;
-                return true;
+                ShowFinalVoronoiState();
+                return true;restNextStep = true;
             }
         }
         UpdateVisualization();
@@ -834,7 +835,10 @@ public class CreatePolygon : MonoBehaviour
 
         if (currentStepIdx == -1)
         {
-            if (currentCellIdx == 0) return;
+            if (currentCellIdx == 0){
+                ShowFinalVoronoiState();
+                return;
+            }
             currentCellIdx--;
             currentStepIdx = LastCutStepIndex(currentCellIdx);
             ClearCellMeshesFrom(currentCellIdx + 1);
@@ -973,22 +977,22 @@ public class CreatePolygon : MonoBehaviour
         switch (cellFillMode)
         {
             case CellFillMode.Wireframe:
-                return CreateSolidMesh(vertices, WireframeFillColor);
+                return CreateSolidMesh(vertices, WireframeFillColor,currentCellIdx);
             case CellFillMode.Solid:
-                return CreateSolidMesh(vertices, fillColor);
+                return CreateSolidMesh(vertices, fillColor,currentCellIdx);
             default:
-                return CreateRadialMesh(vertices, fillColor, seedPoint);
+                return CreateRadialMesh(vertices, fillColor, seedPoint,currentCellIdx);
         }
     }
 
-    static Mesh CreateSolidMesh(List<Vector2> vertices, Color fillColor)
+    static Mesh CreateSolidMesh(List<Vector2> vertices, Color fillColor,int currentCellIdx)
     {
         Mesh mesh = new Mesh();
         Vector3[] v3 = new Vector3[vertices.Count];
         Color[] colors = new Color[vertices.Count];
         for (int i = 0; i < vertices.Count; i++)
         {
-            v3[i] = new Vector3(vertices[i].x, vertices[i].y, 0);
+            v3[i] = new Vector3(vertices[i].x, vertices[i].y, 0.5f-0.01f*currentCellIdx);
             colors[i] = fillColor;
         }
 
@@ -1007,7 +1011,7 @@ public class CreatePolygon : MonoBehaviour
         return mesh;
     }
 
-    static Mesh CreateRadialMesh(List<Vector2> vertices, Color centerColor, Vector2 seedPoint)
+    static Mesh CreateRadialMesh(List<Vector2> vertices, Color centerColor, Vector2 seedPoint,int currentCellIdx)
     {
         Mesh mesh = new Mesh();
         Vector3[] v3 = new Vector3[vertices.Count + 1];
@@ -1018,7 +1022,7 @@ public class CreatePolygon : MonoBehaviour
 
         for (int i = 0; i < vertices.Count; i++)
         {
-            v3[i + 1] = new Vector3(vertices[i].x, vertices[i].y, 0);
+            v3[i + 1] = new Vector3(vertices[i].x, vertices[i].y, 0.5f-0.01f*currentCellIdx);
             colors[i + 1] = Color.black;
         }
 
