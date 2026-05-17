@@ -809,7 +809,8 @@ public class CreatePolygon : MonoBehaviour
                 bisectorLineRenderer.positionCount = 0;
                 connectionLineRenderer.positionCount = 0;
                 ShowFinalVoronoiState();
-                return true;restNextStep = true;
+                restNextStep = true;
+                return true;
             }
         }
         UpdateVisualization();
