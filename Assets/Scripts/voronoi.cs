@@ -118,6 +118,7 @@ public class Voronoi{
     public List<Vector2> pts;
     public List<Polygon> cells;
     public List<List<CutStep>> stepLists;
+    public List<List<int>> neighborLists;
 
     public static List<Polygon> ComputeCells(List<Vector2> pts, float mx, float my) {
         int sz = pts.Count;
@@ -154,6 +155,7 @@ public class Voronoi{
         this.pts = pts;
         this.cells = new List<Polygon>();
         this.stepLists = new List<List<CutStep>>();
+        this.neighborLists = new List<List<int>>();
         int sz = pts.Count;
         Debug.Log("sz: "+sz);
 
@@ -173,6 +175,7 @@ public class Voronoi{
             List<Line> hp = new List<Line>(boundingBox);
             List<CutStep> steps = new List<CutStep>();
             List<Line> ans = geofunc.hp_intersect(hp, true);
+            List<int> neighbor = new List<int>();
 
             for(int j = 0; j < sz; j++) {
                 if (i == j) continue;
@@ -195,9 +198,13 @@ public class Voronoi{
 
             if (ans.Count >= 3) {
                 cells.Add(new Polygon(ans));
+                for(int j = 0; j < ans.Count; j++){
+                    if(ans[j].id!=-1)neighbor.Add(ans[j].id);
+                }
             } else {
                 cells.Add(null); 
             }
+            neighborLists.Add(neighbor);
         }
     }
 }
