@@ -585,7 +585,8 @@ public class CreatePolygon : MonoBehaviour
     void CopyBorderline(int idx){
         borderlines[idx].positionCount=lineRenderer.positionCount;
         for(int i=0;i<lineRenderer.positionCount;i++){
-            borderlines[idx].SetPosition(i,lineRenderer.GetPosition(i));
+            Vector3 pos=lineRenderer.GetPosition(i);
+            borderlines[idx].SetPosition(i,new Vector3(pos.x,pos.y,-0.005f));
         }
     }
 }
