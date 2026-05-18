@@ -43,6 +43,7 @@ public class CreatePolygon : MonoBehaviour
 
     private int currentCellIdx = 0;
     private int currentStepIdx = -1;
+    private GameObject seedpointParent;
     private bool restNextStep = false;
     private bool fastPreviewMode = false;
     private bool showGuideLines = true;
@@ -66,6 +67,7 @@ public class CreatePolygon : MonoBehaviour
     public IReadOnlyList<Vector2> SeedPoints => randomPoints;
 
     public void SetCellFillMode(CellFillMode mode) => cellFillMode = mode;
+    public bool seedpointVisibility=true;
 
     public void SetGuideLinesVisible(bool visible)
     {
@@ -159,11 +161,16 @@ public class CreatePolygon : MonoBehaviour
         if (autoGenerateOnStart) GenerateNewVoronoi();
     }
 
+    
     void Update()
     {
         if (Keyboard.current == null) return;
         if (Keyboard.current.rKey.wasPressedThisFrame) GenerateNewVoronoi();
         if (Keyboard.current.spaceKey.wasPressedThisFrame) ShowFinalVoronoiState();
+        if(Keyboard.current.hKey.wasPressedThisFrame){
+            seedpointVisibility=!seedpointVisibility;
+            SeedpointVisibilityToggle(seedpointVisibility);
+        }
     }
 
     public bool StepForward() => NextStep();
@@ -553,6 +560,8 @@ public class CreatePolygon : MonoBehaviour
 
     void GenerateNewVoronoi()
     {
+        seedpointVisibility=true;
+        SeedpointVisibilityToggle(true);
         RebuildVoronoiStepMode();
     }
 
@@ -778,11 +787,15 @@ public class CreatePolygon : MonoBehaviour
 
     void RefreshSeedPointMarkers()
     {
+        if(seedpointParent==null){
+            seedpointParent=new GameObject("SeedpointParent");
+            seedpointParent.transform.SetParent(transform);
+        }
         while (seedPointMarkers.Count < randomPoints.Count)
         {
             GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             marker.name = $"SeedPoint_{seedPointMarkers.Count}";
-            marker.transform.SetParent(transform);
+            marker.transform.SetParent(seedpointParent.transform);
             marker.layer = gameObject.layer;
             Destroy(marker.GetComponent<Collider>());
             MeshRenderer mr = marker.GetComponent<MeshRenderer>();
@@ -806,6 +819,11 @@ public class CreatePolygon : MonoBehaviour
             MeshRenderer mr = seedPointMarkers[i].GetComponent<MeshRenderer>();
             if (mr != null) mr.sortingOrder = SeedPointSortingOrderBase + i;
         }
+    }
+
+    void SeedpointVisibilityToggle(bool on){
+        if(on)seedpointParent.SetActive(true);
+        else seedpointParent.SetActive(false);
     }
 
     void SetupComponents()
