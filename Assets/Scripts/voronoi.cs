@@ -120,6 +120,47 @@ public class Voronoi{
     public List<List<CutStep>> stepLists;
     public List<List<int>> neighborLists;
 
+    public static List<Vector2> GenerateRandomPoints(
+        int count,
+        float halfWidth,
+        float halfHeight,
+        float minSeparation = 0.38f,
+        int maxAttemptsPerPoint = 128)
+    {
+        var points = new List<Vector2>(Mathf.Max(count, 0));
+        if (count <= 0) return points;
+
+        float minSeparationSq = minSeparation * minSeparation;
+        int placed = 0;
+        while (placed < count)
+        {
+            bool ok = false;
+            for (int attempt = 0; attempt < maxAttemptsPerPoint; attempt++)
+            {
+                Vector2 candidate = geofunc.random_point(halfWidth, halfHeight);
+                if (!IsFarEnoughFromAll(candidate, points, minSeparationSq))
+                    continue;
+                points.Add(candidate);
+                placed++;
+                ok = true;
+                break;
+            }
+            if (!ok)
+                break;
+        }
+        return points;
+    }
+
+    static bool IsFarEnoughFromAll(Vector2 candidate, List<Vector2> existing, float minSeparationSq)
+    {
+        for (int i = 0; i < existing.Count; i++)
+        {
+            if ((existing[i] - candidate).sqrMagnitude < minSeparationSq)
+                return false;
+        }
+        return true;
+    }
+
     public static List<Polygon> ComputeCells(List<Vector2> pts, float mx, float my) {
         int sz = pts.Count;
         if (sz == 0) return new List<Polygon>();
@@ -174,7 +215,7 @@ public class Voronoi{
         for(int i = 0; i < sz; i++) {
             List<Line> hp = new List<Line>(boundingBox);
             List<CutStep> steps = new List<CutStep>();
-            List<Line> ans = geofunc.hp_intersect(hp, true);
+            List<Line> ans = geofunc.hp_intersect(hp, false);
             List<int> neighbor = new List<int>();
 
             for(int j = 0; j < sz; j++) {
@@ -182,7 +223,7 @@ public class Voronoi{
                 Line bc = geofunc.bisector(pts[i], pts[j]);
                 bc.id = j;
                 hp.Add(bc);
-                ans = geofunc.hp_intersect(hp, true);
+                ans = geofunc.hp_intersect(hp, false);
                 bool isedge = false;
                 for(int k = 0;k < ans.Count; k++){
                     if(j == ans[k].id)isedge = true;

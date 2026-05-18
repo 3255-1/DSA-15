@@ -135,9 +135,10 @@ public class DrawAreaSeedInteraction : MonoBehaviour
 
     public bool HasPointNear(Vector2 point)
     {
-        if (createPolygon != null && createPolygon.FindNearestPointIndex(point, PickRadius) >= 0)
+        float sep = createPolygon != null ? createPolygon.MinSeedSeparation : PickRadius;
+        if (createPolygon != null && createPolygon.FindNearestPointIndex(point, sep) >= 0)
             return true;
-        float r2 = PickRadius * PickRadius;
+        float r2 = sep * sep;
         foreach (Vector2 p in seedPoints)
         {
             if ((p - point).sqrMagnitude <= r2) return true;
@@ -196,9 +197,9 @@ public class DrawAreaSeedInteraction : MonoBehaviour
         nextDragPreviewTime = Time.unscaledTime + DragPreviewInterval;
 
         if (UsesStepPlayback())
-            createPolygon.RebuildVoronoiFastPreviewAtProgress();
+            createPolygon.RebuildVoronoiFastPreviewAtProgress(dragPointIndex);
         else
-            createPolygon.RebuildVoronoiFastPreview();
+            createPolygon.RebuildVoronoiFastPreview(dragPointIndex);
     }
 
     void RefreshDisplayAfterSeedMove()

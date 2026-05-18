@@ -10,8 +10,8 @@ public enum CellFillMode { Wireframe, Solid, Radial }
 public class Voronoi_Configuration : MonoBehaviour
 {
     const int RandomCountMin = 2;
-    const int RandomCountMax = 100;
-    const int MaxSeedPoints = 100;
+    const int RandomCountMax = 75;
+    const int MaxSeedPoints = 75;
 
     [Header("References")]
     public CreatePolygon createPolygon;
@@ -497,13 +497,16 @@ public class Voronoi_Configuration : MonoBehaviour
             return;
         }
 
-        if (seedMode == SeedPointMode.Random || seedMode == SeedPointMode.Mixed)
-        {
-            seedPoints.Clear();
-            for (int i = 0; i < n; i++)
-                seedPoints.Add(geofunc.random_point(createPolygon.mapWidth, createPolygon.mapHeight));
-        }
-        SyncSeedPointsToBackend();
+        if (seedMode != SeedPointMode.Random && seedMode != SeedPointMode.Mixed)
+            return;
+
+        if (createPolygon == null) return;
+        createPolygon.ApplyRandomSeedPoints(n);
+        SyncSeedPointsFromBackend();
+        if (seedPoints.Count < n)
+            ShowInvalidToast();
+        RefreshVoronoiDisplay();
+        UpdateTotalSeedPointDisplay();
     }
 
     void OnManualAddClicked()
@@ -638,6 +641,14 @@ public class Voronoi_Configuration : MonoBehaviour
         toast.Play();
     }
 
+    void SyncSeedPointsFromBackend()
+    {
+        seedPoints.Clear();
+        if (createPolygon == null) return;
+        foreach (Vector2 p in createPolygon.SeedPoints)
+            seedPoints.Add(p);
+    }
+
     void SyncSeedPointsToBackend(bool clearOnly = false)
     {
         if (createPolygon == null) return;
@@ -649,7 +660,7 @@ public class Voronoi_Configuration : MonoBehaviour
         }
         createPolygon.ClearSeedPoints();
         foreach (Vector2 p in seedPoints)
-            createPolygon.TryAddSeedPoint(p, DrawAreaSeedInteraction.PickRadius);
+            createPolygon.TryAddSeedPoint(p);
 
         RefreshVoronoiDisplay();
         UpdateTotalSeedPointDisplay();

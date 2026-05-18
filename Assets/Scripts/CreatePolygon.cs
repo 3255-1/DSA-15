@@ -18,7 +18,9 @@ public class CreatePolygon : MonoBehaviour
     public Material meshMaterial;
     public Color polygonColor = new Color(0f, 0.8f, 1f, 0.8f);
     public Color seedPointColor = Color.white;
-    public float seedPointRadius = 0.25f;
+    public float seedPointRadius = 0.15f;
+
+    public float MinSeedSeparation => seedPointRadius * 2f + 0.08f;
 
     [Header("邊界線設定")]
     public Color borderlineColor = Color.black;
@@ -47,6 +49,8 @@ public class CreatePolygon : MonoBehaviour
     private bool restNextStep = false;
     private bool fastPreviewMode = false;
     private bool showGuideLines = true;
+    private int lastDragPreviewSeedIndex = -1;
+    private readonly List<int> lastDragPreviewNeighbors = new List<int>();
     private CellFillMode cellFillMode = CellFillMode.Radial;
     static readonly Color WireframeFillColor = new Color(0xDB / 255f, 0xDB / 255f, 0xDB / 255f, .95f);
     const float CellMeshZBase = 0.5f;
@@ -202,20 +206,26 @@ public class CreatePolygon : MonoBehaviour
         if (lineRenderer != null) lineRenderer.positionCount = 0;
         if (bisectorLineRenderer != null) bisectorLineRenderer.positionCount = 0;
         if (connectionLineRenderer != null) connectionLineRenderer.positionCount = 0;
+        ClearDragPreviewNeighborCache();
     }
 
-    public void SetRandomSeedPoints(int count)
+    public void SetRandomSeedPoints(int count) => ApplyRandomSeedPoints(count);
+
+    public void ApplyRandomSeedPoints(int count)
     {
         randomPoints.Clear();
-        for (int i = 0; i < count; i++)
-            randomPoints.Add(geofunc.random_point(mapWidth, mapHeight));
+        ClearDiagramVisuals();
+        if (count > 0)
+            randomPoints.AddRange(Voronoi.GenerateRandomPoints(
+                count, mapWidth, mapHeight, MinSeedSeparation, maxAttemptsPerPoint: 256));
         EnsureCellMeshes(Mathf.Max(randomPoints.Count, 1));
         CreateBorderlines(Mathf.Max(randomPoints.Count, 1));
         RefreshSeedPointMarkers();
     }
 
-    public bool TryAddSeedPoint(Vector2 point, float minSeparation = 0.5f)
+    public bool TryAddSeedPoint(Vector2 point, float minSeparation = -1f)
     {
+        if (minSeparation < 0f) minSeparation = MinSeedSeparation;
         if (FindNearestPointIndex(point, minSeparation) >= 0) return false;
         randomPoints.Add(point);
         EnsureCellMeshes(Mathf.Max(randomPoints.Count, meshs.Count));
@@ -285,12 +295,11 @@ public class CreatePolygon : MonoBehaviour
         UpdateVisualization();
     }
 
-    public void RebuildVoronoiFastPreview()
+    public void RebuildVoronoiFastPreview(int dragSeedIndex = -1)
     {
         fastPreviewMode = true;
         bisectorLineRenderer.positionCount = 0;
         connectionLineRenderer.positionCount = 0;
-        meshFilter.mesh = new Mesh();
         if (lineRenderer != null) lineRenderer.positionCount = 0;
 
         if (randomPoints.Count == 0)
@@ -302,10 +311,31 @@ public class CreatePolygon : MonoBehaviour
         EnsureCellMeshes(randomPoints.Count);
         CreateBorderlines(randomPoints.Count);
         List<Polygon> cells = Voronoi.ComputeCells(randomPoints, mapWidth, mapHeight);
-        
-        AssignGraphColors(cells);
 
-        for (int i = 0; i < meshs.Count; i++)
+        if (cellColors.Count < randomPoints.Count)
+            AssignGraphColors(cells);
+
+        int n = randomPoints.Count;
+        HashSet<int> affected = CollectDragAffectedIndices(dragSeedIndex, cells);
+        bool partial = dragSeedIndex >= 0 && affected.Count < n;
+
+        if (!partial)
+        {
+            meshFilter.mesh = new Mesh();
+            for (int i = 0; i < meshs.Count; i++)
+            {
+                if (i < cells.Count)
+                    DrawCellFromComputePreview(i, cells[i]);
+                else
+                {
+                    ClearCellMesh(i);
+                    ClearBorderline(i);
+                }
+            }
+            return;
+        }
+
+        foreach (int i in affected)
         {
             if (i < cells.Count)
                 DrawCellFromComputePreview(i, cells[i]);
@@ -317,11 +347,12 @@ public class CreatePolygon : MonoBehaviour
         }
     }
 
-    public void RebuildVoronoiFastPreviewAtProgress()
+    public void RebuildVoronoiFastPreviewAtProgress(int dragSeedIndex = -1)
     {
         fastPreviewMode = true;
         bisectorLineRenderer.positionCount = 0;
         connectionLineRenderer.positionCount = 0;
+        if (lineRenderer != null) lineRenderer.positionCount = 0;
 
         if (randomPoints.Count == 0)
         {
@@ -335,22 +366,39 @@ public class CreatePolygon : MonoBehaviour
 
         EnsureCellMeshes(randomPoints.Count);
         CreateBorderlines(randomPoints.Count);
-        ClearAllCellMeshes();
-        ClearAllBorderlines();
-        meshFilter.mesh = new Mesh();
-        if (lineRenderer != null) lineRenderer.positionCount = 0;
 
         List<Polygon> cells = Voronoi.ComputeCells(randomPoints, mapWidth, mapHeight);
-        AssignGraphColors(cells);
+        if (cellColors.Count < randomPoints.Count)
+            AssignGraphColors(cells);
 
         int n = randomPoints.Count;
+        HashSet<int> affected = CollectDragAffectedIndices(dragSeedIndex, cells);
+        bool partial = dragSeedIndex >= 0 && affected.Count < n;
+
+        if (!partial)
+        {
+            ClearAllCellMeshes();
+            ClearAllBorderlines();
+            meshFilter.mesh = new Mesh();
+        }
 
         if (savedRest && savedCell >= n)
         {
-            for (int i = 0; i < n; i++)
+            if (partial)
             {
-                if (i < cells.Count)
-                    DrawCellFromComputePreview(i, cells[i]);
+                foreach (int i in affected)
+                {
+                    if (i < cells.Count)
+                        DrawCellFromComputePreview(i, cells[i]);
+                }
+            }
+            else
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    if (i < cells.Count)
+                        DrawCellFromComputePreview(i, cells[i]);
+                }
             }
             currentCellIdx = savedCell;
             currentStepIdx = savedStep;
@@ -365,11 +413,16 @@ public class CreatePolygon : MonoBehaviour
 
         for (int c = 0; c < savedCell; c++)
         {
+            if (partial && !affected.Contains(c)) continue;
             if (c < cells.Count)
                 DrawCellFromComputePreview(c, cells[c]);
         }
 
         if (savedStep == -2)
+            return;
+
+        bool refreshCurrentOverlay = !partial || affected.Contains(savedCell);
+        if (!refreshCurrentOverlay)
             return;
 
         if (savedStep == -1)
@@ -378,9 +431,68 @@ public class CreatePolygon : MonoBehaviour
             return;
         }
 
-        // 進行中的 cell：用既有 step 多邊形預覽，避免 ComputeCells 直接顯示最終外形
         if (!TryDrawCurrentCellStepOnMeshFilter(savedCell, savedStep))
             meshFilter.mesh = new Mesh();
+    }
+
+    void ClearDragPreviewNeighborCache()
+    {
+        lastDragPreviewSeedIndex = -1;
+        lastDragPreviewNeighbors.Clear();
+    }
+
+    static void AddPolygonNeighborIds(Polygon cell, HashSet<int> into, int pointCount)
+    {
+        if (cell?.edges == null) return;
+        foreach (Line line in cell.edges)
+        {
+            if (line.id >= 0 && line.id < pointCount)
+                into.Add(line.id);
+        }
+    }
+
+    static void AddStoredNeighbors(IReadOnlyList<int> neighbors, HashSet<int> into, int pointCount)
+    {
+        if (neighbors == null) return;
+        foreach (int n in neighbors)
+        {
+            if (n >= 0 && n < pointCount)
+                into.Add(n);
+        }
+    }
+
+    HashSet<int> CollectDragAffectedIndices(int dragIndex, List<Polygon> cells)
+    {
+        int n = randomPoints.Count;
+        var affected = new HashSet<int>();
+        if (dragIndex < 0 || dragIndex >= n)
+        {
+            for (int i = 0; i < n; i++)
+                affected.Add(i);
+            return affected;
+        }
+
+        affected.Add(dragIndex);
+
+        if (voronoiResult != null && dragIndex < voronoiResult.neighborLists.Count)
+            AddStoredNeighbors(voronoiResult.neighborLists[dragIndex], affected, n);
+
+        if (lastDragPreviewSeedIndex == dragIndex)
+            AddStoredNeighbors(lastDragPreviewNeighbors, affected, n);
+
+        if (cells != null && dragIndex < cells.Count)
+            AddPolygonNeighborIds(cells[dragIndex], affected, n);
+
+        lastDragPreviewSeedIndex = dragIndex;
+        lastDragPreviewNeighbors.Clear();
+        if (cells != null && dragIndex < cells.Count && cells[dragIndex] != null)
+        {
+            var next = new HashSet<int>();
+            AddPolygonNeighborIds(cells[dragIndex], next, n);
+            lastDragPreviewNeighbors.AddRange(next);
+        }
+
+        return affected;
     }
 
     bool TryDrawCurrentCellStepOnMeshFilter(int cellIndex, int stepIndex)
@@ -443,6 +555,7 @@ public class CreatePolygon : MonoBehaviour
     public void RebuildVoronoiPreservePlaybackProgress()
     {
         fastPreviewMode = false;
+        ClearDragPreviewNeighborCache();
         bisectorLineRenderer.positionCount = 0;
         connectionLineRenderer.positionCount = 0;
 
@@ -888,6 +1001,12 @@ public class CreatePolygon : MonoBehaviour
             ClearCellMeshesFrom(0);
             ClearBorderlineFrom(0);
         }
+        if (currentCellIdx < 0 || currentCellIdx >= voronoiResult.stepLists.Count)
+        {
+            ShowFinalVoronoiState();
+            return true;
+        }
+
         if (currentStepIdx >= voronoiResult.stepLists[currentCellIdx].Count)
         {
             currentStepIdx = -2;
@@ -916,7 +1035,8 @@ public class CreatePolygon : MonoBehaviour
         if (restNextStep)
         {
             restNextStep = false;
-            currentCellIdx = voronoiResult.pts.Count - 1;
+            int lastCell = Mathf.Min(voronoiResult.pts.Count, voronoiResult.stepLists.Count) - 1;
+            currentCellIdx = Mathf.Max(0, lastCell);
             currentStepIdx = LastCutStepIndex(currentCellIdx);
             UpdateVisualization();
             return;
@@ -955,10 +1075,14 @@ public class CreatePolygon : MonoBehaviour
             return;
         }
 
-        if (currentStepIdx == voronoiResult.stepLists[currentCellIdx].Count - 1)
+        if (currentCellIdx >= 0 && currentCellIdx < voronoiResult.stepLists.Count)
         {
-            ClearCellMesh(currentCellIdx);
-            ClearBorderline(currentCellIdx);
+            List<CutStep> steps = voronoiResult.stepLists[currentCellIdx];
+            if (steps != null && currentStepIdx == steps.Count - 1)
+            {
+                ClearCellMesh(currentCellIdx);
+                ClearBorderline(currentCellIdx);
+            }
         }
         currentStepIdx--;
         UpdateVisualization();
@@ -966,7 +1090,10 @@ public class CreatePolygon : MonoBehaviour
 
     int LastCutStepIndex(int cellIndex)
     {
-        int count = voronoiResult.stepLists[cellIndex].Count;
+        if (voronoiResult == null || cellIndex < 0 || cellIndex >= voronoiResult.stepLists.Count)
+            return -1;
+        List<CutStep> steps = voronoiResult.stepLists[cellIndex];
+        int count = steps != null ? steps.Count : 0;
         return count > 0 ? count - 1 : -1;
     }
 
@@ -985,14 +1112,28 @@ public class CreatePolygon : MonoBehaviour
     void UpdateVisualization()
     {
         if (voronoiResult == null || voronoiResult.pts.Count == 0) return;
-        Polygon polyToDraw = null;
-        CutStep currentStep = null;
+
+        int cellCount = voronoiResult.stepLists.Count;
+        if (currentCellIdx < 0 || currentCellIdx >= cellCount)
+        {
+            meshFilter.mesh = new Mesh();
+            ClearGuideLines();
+            return;
+        }
+
         List<CutStep> steps = voronoiResult.stepLists[currentCellIdx];
+
         if (currentStepIdx == -2)
         {
-            Debug.Log("Just finished cell " + (currentCellIdx - 1) + ". Let me rest a lil bit.");
+            meshFilter.mesh = new Mesh();
+            if (lineRenderer != null) lineRenderer.positionCount = 0;
+            ClearGuideLines();
+            return;
         }
-        else if (currentStepIdx == -1)
+
+        Polygon polyToDraw = null;
+        CutStep currentStep = null;
+        if (currentStepIdx == -1)
         {
             Vector2 b1 = new Vector2(-mapWidth, -mapHeight);
             Vector2 b2 = new Vector2(mapWidth, -mapHeight);
@@ -1002,7 +1143,7 @@ public class CreatePolygon : MonoBehaviour
                 new Line(b1, b2), new Line(b2, b3), new Line(b3, b4), new Line(b4, b1)
             });
         }
-        else if (steps != null && currentStepIdx < steps.Count)
+        else if (steps != null && currentStepIdx >= 0 && currentStepIdx < steps.Count)
         {
             currentStep = steps[currentStepIdx];
             polyToDraw = currentStep.currentPolygon;
