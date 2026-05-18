@@ -123,10 +123,7 @@ public class CreatePolygon : MonoBehaviour
         ClearAllBorderlines();
 
         voronoiResult = new Voronoi(new List<Vector2>(randomPoints), mapWidth, mapHeight);
-        if (cellColors.Count != randomPoints.Count)
-        {
-            AssignGraphColors(voronoiResult.neighborLists);
-        }
+        AssignGraphColors(voronoiResult.neighborLists);
 
         for (int i = 0; i < meshs.Count; i++)
         {
@@ -273,10 +270,7 @@ public class CreatePolygon : MonoBehaviour
         ClearAllCellMeshes();
         ClearAllBorderlines();
         voronoiResult = new Voronoi(new List<Vector2>(randomPoints), mapWidth, mapHeight);
-        if (cellColors.Count != randomPoints.Count)
-        {
-            AssignGraphColors(voronoiResult.neighborLists);
-        }
+        AssignGraphColors(voronoiResult.neighborLists);
         currentCellIdx = 0;
         currentStepIdx = -1;
         restNextStep = false;
@@ -301,11 +295,7 @@ public class CreatePolygon : MonoBehaviour
         CreateBorderlines(randomPoints.Count);
         List<Polygon> cells = Voronoi.ComputeCells(randomPoints, mapWidth, mapHeight);
         
-        // 拖曳時 (FastPreview) 固定顏色，不再重新計算圖論著色，除非有缺顏色
-        if (cellColors.Count != randomPoints.Count)
-        {
-            AssignGraphColors(cells);
-        }
+        AssignGraphColors(cells);
 
         for (int i = 0; i < meshs.Count; i++)
         {
@@ -343,8 +333,7 @@ public class CreatePolygon : MonoBehaviour
         if (lineRenderer != null) lineRenderer.positionCount = 0;
 
         List<Polygon> cells = Voronoi.ComputeCells(randomPoints, mapWidth, mapHeight);
-        if (cellColors.Count != randomPoints.Count)
-            AssignGraphColors(cells);
+        AssignGraphColors(cells);
 
         int n = randomPoints.Count;
 
@@ -467,10 +456,7 @@ public class CreatePolygon : MonoBehaviour
         if (lineRenderer != null) lineRenderer.positionCount = 0;
 
         voronoiResult = new Voronoi(new List<Vector2>(randomPoints), mapWidth, mapHeight);
-        if (cellColors.Count != randomPoints.Count)
-        {
-            AssignGraphColors(voronoiResult.neighborLists);
-        }
+        AssignGraphColors(voronoiResult.neighborLists);
 
         int n = voronoiResult.pts.Count;
         if (n == 0) return;
