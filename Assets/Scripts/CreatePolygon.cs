@@ -799,18 +799,26 @@ public class CreatePolygon : MonoBehaviour
         while (cellPaletteIndices.Count < randomPoints.Count) cellPaletteIndices.Add(-1);
         if (cellPaletteIndices.Count > randomPoints.Count) cellPaletteIndices.RemoveRange(randomPoints.Count, cellPaletteIndices.Count - randomPoints.Count);
 
+        List<int> sortedIndices = new List<int>();
+        for (int i = 0; i < randomPoints.Count; i++) sortedIndices.Add(i);
+        
+        sortedIndices.Sort((a, b) => {
+            int degA = a < adj.Count ? adj[a].Count : 0;
+            int degB = b < adj.Count ? adj[b].Count : 0;
+            return degB.CompareTo(degA);
+        });
+
         Color[] Palette = new Color[] {
             new Color(1f, 0.2f, 0.3f, 0.8f),   // Neon Red
             new Color(0.2f, 1f, 0.4f, 0.8f),   // Neon Green
             new Color(0.2f, 0.6f, 1f, 0.8f),   // Neon Blue
             new Color(1f, 0.9f, 0.2f, 0.8f),   // Neon Yellow
             new Color(0.8f, 0.2f, 1f, 0.8f),   // Neon Purple
-            new Color(0.6f, 0.6f, 0.6f, 0.8f)   // Neon Gray
+            new Color(0.6f, 0.6f, 0.6f, 0.8f),   // Neon Gray
         };
 
         int[] globalUsage = new int[Palette.Length];
 
-        // 計算目前已被保留顏色的全域使用率
         for (int i = 0; i < randomPoints.Count; i++)
         {
             if (cellPaletteIndices[i] != -1)
@@ -819,7 +827,7 @@ public class CreatePolygon : MonoBehaviour
             }
         }
 
-        for (int i = 0; i < randomPoints.Count; i++)
+        foreach (int i in sortedIndices)
         {
             List<int> neighbors = i < adj.Count ? adj[i] : new List<int>();
             bool[] used = new bool[Palette.Length];
@@ -844,7 +852,6 @@ public class CreatePolygon : MonoBehaviour
 
             if (keptExisting) continue;
 
-            // 如果舊顏色衝突了，需要將原本的 globalUsage 減掉，因為它即將換顏色
             if (cellPaletteIndices[i] != -1)
             {
                 globalUsage[cellPaletteIndices[i]] = Mathf.Max(0, globalUsage[cellPaletteIndices[i]] - 1);
@@ -867,7 +874,6 @@ public class CreatePolygon : MonoBehaviour
                 }
             }
 
-            // 平面圖四色定理保證通常不會全滿，但萬一真的被包圍，強制選一個最少用的，無視 used
             if (chosenP == -1) 
             {
                 minUsage = int.MaxValue;
@@ -890,6 +896,192 @@ public class CreatePolygon : MonoBehaviour
             Color finalColor = Color.HSVToRGB(h, s, v);
             finalColor.a = 0.8f;
             cellColors[i] = finalColor;
+        }
+
+        // 當著色完成後，如果仍有相鄰同色衝突，主動檢查並嘗試「推播修改」周圍鄰居的顏色
+        for (int pass = 0; pass < 3; pass++)
+        {
+            bool resolvedAny = false;
+            for (int i = 0; i < randomPoints.Count; i++)
+            {
+                List<int> neighbors = i < adj.Count ? adj[i] : new List<int>();
+                foreach (int n in neighbors)
+                {
+                    float h = 0f, s = 0f, v = 0f;
+                    Color finalColor = Color.clear;
+                    if (n != i && n < cellPaletteIndices.Count && cellPaletteIndices[i] != -1 && cellPaletteIndices[i] == cellPaletteIndices[n])
+                    {
+                        // 為鄰居 n 重新選顏色
+                        bool[] nNeighborColors = new bool[Palette.Length];
+                        List<int> nNeighbors = n < adj.Count ? adj[n] : new List<int>();
+                        foreach (int nn in nNeighbors)
+                        {
+                            if (nn != n && nn < cellPaletteIndices.Count && cellPaletteIndices[nn] != -1)
+                            {
+                                nNeighborColors[cellPaletteIndices[nn]] = true;
+                            }
+                        }
+
+                        int newColorForN = -1;
+                        for (int p = 0; p < Palette.Length; p++)
+                        {
+                            if (!nNeighborColors[p])
+                            {
+                                newColorForN = p;
+                                break;
+                            }
+                        }
+
+                        if (newColorForN != -1)
+                        {
+                            cellPaletteIndices[n] = newColorForN;
+                            Color.RGBToHSV(Palette[newColorForN], out h, out s, out v);
+                            h = Mathf.Repeat(h + UnityEngine.Random.Range(-0.03f, 0.03f), 1f);
+                            finalColor = Color.HSVToRGB(h, s, v);
+                            finalColor.a = 0.8f;
+                            cellColors[n] = finalColor;
+                            resolvedAny = true;
+                        }
+                        else
+                        {
+                            // 幫 n 的鄰居 nn 換色，以釋放顏色給 n
+                            bool cascadeResolved = false;
+                            foreach (int nn in nNeighbors)
+                            {
+                                if (nn == i || nn == n || nn >= cellPaletteIndices.Count || cellPaletteIndices[nn] == -1) continue;
+
+                                bool[] nnNeighborColors = new bool[Palette.Length];
+                                List<int> nnNeighbors = nn < adj.Count ? adj[nn] : new List<int>();
+                                foreach (int nnn in nnNeighbors)
+                                {
+                                    if (nnn != nn && nnn < cellPaletteIndices.Count && cellPaletteIndices[nnn] != -1)
+                                    {
+                                        nnNeighborColors[cellPaletteIndices[nnn]] = true;
+                                    }
+                                }
+
+                                int altColorForNN = -1;
+                                for (int p = 0; p < Palette.Length; p++)
+                                {
+                                    if (!nnNeighborColors[p])
+                                    {
+                                        altColorForNN = p;
+                                        break;
+                                    }
+                                }
+
+                                if (altColorForNN != -1)
+                                {
+                                    int oldColorOfNN = cellPaletteIndices[nn];
+                                    cellPaletteIndices[nn] = altColorForNN;
+                                    
+                                    Color.RGBToHSV(Palette[altColorForNN], out h, out s, out v);
+                                    h = Mathf.Repeat(h + UnityEngine.Random.Range(-0.03f, 0.03f), 1f);
+                                    finalColor = Color.HSVToRGB(h, s, v);
+                                    finalColor.a = 0.8f;
+                                    cellColors[nn] = finalColor;
+
+                                    cellPaletteIndices[n] = oldColorOfNN;
+                                    Color.RGBToHSV(Palette[oldColorOfNN], out h, out s, out v);
+                                    h = Mathf.Repeat(h + UnityEngine.Random.Range(-0.03f, 0.03f), 1f);
+                                    finalColor = Color.HSVToRGB(h, s, v);
+                                    finalColor.a = 0.8f;
+                                    cellColors[n] = finalColor;
+
+                                    resolvedAny = true;
+                                    cascadeResolved = true;
+                                    break;
+                                }
+                            }
+
+                            if (!cascadeResolved)
+                            {
+                                // 試著為細胞 i 重新選顏色
+                                bool[] iNeighborColors = new bool[Palette.Length];
+                                foreach (int ii in neighbors)
+                                {
+                                    if (ii != i && ii < cellPaletteIndices.Count && cellPaletteIndices[ii] != -1)
+                                    {
+                                        iNeighborColors[cellPaletteIndices[ii]] = true;
+                                    }
+                                }
+
+                                int newColorForI = -1;
+                                for (int p = 0; p < Palette.Length; p++)
+                                {
+                                    if (!iNeighborColors[p])
+                                    {
+                                        newColorForI = p;
+                                        break;
+                                    }
+                                }
+
+                                if (newColorForI != -1)
+                                {
+                                    cellPaletteIndices[i] = newColorForI;
+                                    Color.RGBToHSV(Palette[newColorForI], out h, out s, out v);
+                                    h = Mathf.Repeat(h + UnityEngine.Random.Range(-0.03f, 0.03f), 1f);
+                                    finalColor = Color.HSVToRGB(h, s, v);
+                                    finalColor.a = 0.8f;
+                                    cellColors[i] = finalColor;
+                                    resolvedAny = true;
+                                }
+                                else
+                                {
+                                    // 試著幫 i 的鄰居 ii 換色，以釋放顏色給 i
+                                    foreach (int ii in neighbors)
+                                    {
+                                        if (ii == n || ii == i || ii >= cellPaletteIndices.Count || cellPaletteIndices[ii] == -1) continue;
+
+                                        bool[] iiNeighborColors = new bool[Palette.Length];
+                                        List<int> iiNeighbors = ii < adj.Count ? adj[ii] : new List<int>();
+                                        foreach (int iii in iiNeighbors)
+                                        {
+                                            if (iii != ii && iii < cellPaletteIndices.Count && cellPaletteIndices[iii] != -1)
+                                            {
+                                                iiNeighborColors[cellPaletteIndices[iii]] = true;
+                                            }
+                                        }
+
+                                        int altColorForII = -1;
+                                        for (int p = 0; p < Palette.Length; p++)
+                                        {
+                                            if (!iiNeighborColors[p])
+                                            {
+                                                altColorForII = p;
+                                                break;
+                                            }
+                                        }
+
+                                        if (altColorForII != -1)
+                                        {
+                                            int oldColorOfII = cellPaletteIndices[ii];
+                                            cellPaletteIndices[ii] = altColorForII;
+
+                                            Color.RGBToHSV(Palette[altColorForII], out h, out s, out v);
+                                            h = Mathf.Repeat(h + UnityEngine.Random.Range(-0.03f, 0.03f), 1f);
+                                            finalColor = Color.HSVToRGB(h, s, v);
+                                            finalColor.a = 0.8f;
+                                            cellColors[ii] = finalColor;
+
+                                            cellPaletteIndices[i] = oldColorOfII;
+                                            Color.RGBToHSV(Palette[oldColorOfII], out h, out s, out v);
+                                            h = Mathf.Repeat(h + UnityEngine.Random.Range(-0.03f, 0.03f), 1f);
+                                            finalColor = Color.HSVToRGB(h, s, v);
+                                            finalColor.a = 0.8f;
+                                            cellColors[i] = finalColor;
+
+                                            resolvedAny = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (!resolvedAny) break;
         }
     }
 
