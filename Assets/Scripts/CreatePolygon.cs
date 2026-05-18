@@ -37,6 +37,7 @@ public class CreatePolygon : MonoBehaviour
     private List<GameObject> seedPointMarkers = new List<GameObject>();
     private List<GameObject> meshs = new List<GameObject>();
     private readonly List<Color> cellColors = new List<Color>();
+    private readonly List<int> cellPaletteIndices = new List<int>();
     private readonly List<LineRenderer> borderlines = new List<LineRenderer>();
 
     private int currentCellIdx = 0;
@@ -122,7 +123,10 @@ public class CreatePolygon : MonoBehaviour
         ClearAllBorderlines();
 
         voronoiResult = new Voronoi(new List<Vector2>(randomPoints), mapWidth, mapHeight);
-        AssignGraphColors(voronoiResult.neighborLists);
+        if (cellColors.Count != randomPoints.Count)
+        {
+            AssignGraphColors(voronoiResult.neighborLists);
+        }
 
         for (int i = 0; i < meshs.Count; i++)
         {
@@ -185,6 +189,7 @@ public class CreatePolygon : MonoBehaviour
         currentStepIdx = -1;
         voronoiResult = null;
         cellColors.Clear();
+        cellPaletteIndices.Clear();
 
         ClearAllCellMeshes();
         ClearAllBorderlines();
@@ -268,7 +273,10 @@ public class CreatePolygon : MonoBehaviour
         ClearAllCellMeshes();
         ClearAllBorderlines();
         voronoiResult = new Voronoi(new List<Vector2>(randomPoints), mapWidth, mapHeight);
-        AssignGraphColors(voronoiResult.neighborLists);
+        if (cellColors.Count != randomPoints.Count)
+        {
+            AssignGraphColors(voronoiResult.neighborLists);
+        }
         currentCellIdx = 0;
         currentStepIdx = -1;
         restNextStep = false;
@@ -294,7 +302,7 @@ public class CreatePolygon : MonoBehaviour
         List<Polygon> cells = Voronoi.ComputeCells(randomPoints, mapWidth, mapHeight);
         
         // 拖曳時 (FastPreview) 固定顏色，不再重新計算圖論著色，除非有缺顏色
-        if (cellColors.Count < randomPoints.Count)
+        if (cellColors.Count != randomPoints.Count)
         {
             AssignGraphColors(cells);
         }
@@ -335,7 +343,7 @@ public class CreatePolygon : MonoBehaviour
         if (lineRenderer != null) lineRenderer.positionCount = 0;
 
         List<Polygon> cells = Voronoi.ComputeCells(randomPoints, mapWidth, mapHeight);
-        if (cellColors.Count < randomPoints.Count)
+        if (cellColors.Count != randomPoints.Count)
             AssignGraphColors(cells);
 
         int n = randomPoints.Count;
@@ -459,7 +467,10 @@ public class CreatePolygon : MonoBehaviour
         if (lineRenderer != null) lineRenderer.positionCount = 0;
 
         voronoiResult = new Voronoi(new List<Vector2>(randomPoints), mapWidth, mapHeight);
-        AssignGraphColors(voronoiResult.neighborLists);
+        if (cellColors.Count != randomPoints.Count)
+        {
+            AssignGraphColors(voronoiResult.neighborLists);
+        }
 
         int n = voronoiResult.pts.Count;
         if (n == 0) return;
@@ -637,6 +648,7 @@ public class CreatePolygon : MonoBehaviour
     {
         voronoiResult = null;
         cellColors.Clear();
+        cellPaletteIndices.Clear();
         ClearAllCellMeshes();
         ClearAllBorderlines();
         if (bisectorLineRenderer != null) bisectorLineRenderer.positionCount = 0;
@@ -675,15 +687,28 @@ public class CreatePolygon : MonoBehaviour
         while (cellColors.Count < randomPoints.Count) cellColors.Add(Color.clear);
         if (cellColors.Count > randomPoints.Count) cellColors.RemoveRange(randomPoints.Count, cellColors.Count - randomPoints.Count);
 
+        while (cellPaletteIndices.Count < randomPoints.Count) cellPaletteIndices.Add(-1);
+        if (cellPaletteIndices.Count > randomPoints.Count) cellPaletteIndices.RemoveRange(randomPoints.Count, cellPaletteIndices.Count - randomPoints.Count);
+
         Color[] Palette = new Color[] {
             new Color(1f, 0.2f, 0.3f, 0.8f),   // Neon Red
             new Color(0.2f, 1f, 0.4f, 0.8f),   // Neon Green
             new Color(0.2f, 0.6f, 1f, 0.8f),   // Neon Blue
             new Color(1f, 0.9f, 0.2f, 0.8f),   // Neon Yellow
-            new Color(0.8f, 0.2f, 1f, 0.8f)    // Neon Purple
+            new Color(0.8f, 0.2f, 1f, 0.8f),   // Neon Purple
+            new Color(0.6f, 0.6f, 0.6f, 0.8f)   // Neon Gray
         };
 
         int[] globalUsage = new int[Palette.Length];
+
+        // 計算目前已被保留顏色的全域使用率
+        for (int i = 0; i < randomPoints.Count; i++)
+        {
+            if (cellPaletteIndices[i] != -1)
+            {
+                globalUsage[cellPaletteIndices[i]]++;
+            }
+        }
 
         for (int i = 0; i < randomPoints.Count; i++)
         {
@@ -692,45 +717,29 @@ public class CreatePolygon : MonoBehaviour
             
             foreach (int n in neighbors)
             {
-                if (n != i && n < cellColors.Count && cellColors[n] != Color.clear)
+                if (n != i && n < cellPaletteIndices.Count && cellPaletteIndices[n] != -1)
                 {
-                    float minDiff = float.MaxValue;
-                    int bestP = 0;
-                    for (int p = 0; p < Palette.Length; p++)
-                    {
-                        float h1,s1,v1, h2,s2,v2;
-                        Color.RGBToHSV(cellColors[n], out h1, out s1, out v1);
-                        Color.RGBToHSV(Palette[p], out h2, out s2, out v2);
-                        float diff = Mathf.Abs(h1 - h2);
-                        if (diff > 0.5f) diff = 1f - diff;
-                        if (diff < minDiff) { minDiff = diff; bestP = p; }
-                    }
-                    if (minDiff < 0.1f) used[bestP] = true;
+                    used[cellPaletteIndices[n]] = true;
                 }
             }
 
             bool keptExisting = false;
-            if (cellColors[i] != Color.clear)
+            if (cellPaletteIndices[i] != -1)
             {
-                float minDiff = float.MaxValue;
-                int currentP = 0;
-                for (int p = 0; p < Palette.Length; p++)
-                {
-                    float h1,s1,v1, h2,s2,v2;
-                    Color.RGBToHSV(cellColors[i], out h1, out s1, out v1);
-                    Color.RGBToHSV(Palette[p], out h2, out s2, out v2);
-                    float diff = Mathf.Abs(h1 - h2);
-                    if (diff > 0.5f) diff = 1f - diff;
-                    if (diff < minDiff) { minDiff = diff; currentP = p; }
-                }
+                int currentP = cellPaletteIndices[i];
                 if (!used[currentP]) 
                 {
                     keptExisting = true;
-                    globalUsage[currentP]++;
                 }
             }
 
             if (keptExisting) continue;
+
+            // 如果舊顏色衝突了，需要將原本的 globalUsage 減掉，因為它即將換顏色
+            if (cellPaletteIndices[i] != -1)
+            {
+                globalUsage[cellPaletteIndices[i]] = Mathf.Max(0, globalUsage[cellPaletteIndices[i]] - 1);
+            }
 
             int chosenP = -1;
             int minUsage = int.MaxValue;
@@ -764,6 +773,7 @@ public class CreatePolygon : MonoBehaviour
             }
 
             globalUsage[chosenP]++;
+            cellPaletteIndices[i] = chosenP;
 
             float h, s, v;
             Color.RGBToHSV(Palette[chosenP], out h, out s, out v);
