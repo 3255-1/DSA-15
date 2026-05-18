@@ -24,6 +24,7 @@ public class CreatePolygon : MonoBehaviour
     public Color borderlineColor = Color.black;
     public Color currentCellBorderColor = Color.black;
     public float borderWidth = 0.05f;
+    public float currentBorderWidth = 0.2f;
     public Material borderMaterial;
 
     private LineRenderer bisectorLineRenderer;
@@ -46,7 +47,7 @@ public class CreatePolygon : MonoBehaviour
     private bool fastPreviewMode = false;
     private bool showGuideLines = true;
     private CellFillMode cellFillMode = CellFillMode.Radial;
-    static readonly Color WireframeFillColor = new Color(0xDB / 255f, 0xDB / 255f, 0xDB / 255f, 1f);
+    static readonly Color WireframeFillColor = new Color(0xDB / 255f, 0xDB / 255f, 0xDB / 255f, .95f);
     const float CellMeshZBase = 0.5f;
     const float CellMeshZStep = 0.01f;
     const float CellBorderZOffset = 0.005f;
@@ -821,8 +822,9 @@ public class CreatePolygon : MonoBehaviour
         lineRenderer = gameObject.GetComponent<LineRenderer>();
         if (lineRenderer == null) lineRenderer = gameObject.AddComponent<LineRenderer>();
         lineRenderer.positionCount = 0;
+        lineRenderer.sortingOrder=150;
         lineRenderer.startColor = lineRenderer.endColor = currentCellBorderColor;
-        lineRenderer.startWidth = lineRenderer.endWidth = borderWidth;
+        lineRenderer.startWidth = lineRenderer.endWidth = currentBorderWidth;
         if (borderMaterial == null) borderMaterial = new Material(Shader.Find("Sprites/Default"));
         lineRenderer.material = borderMaterial;
 
@@ -831,12 +833,14 @@ public class CreatePolygon : MonoBehaviour
         bObj.transform.SetParent(transform);
         bObj.layer = layer;
         bisectorLineRenderer = bObj.AddComponent<LineRenderer>();
+        bisectorLineRenderer.sortingOrder=151;
         ConfigureLineRenderer(bisectorLineRenderer, Color.red, 0.08f);
 
         GameObject cObj = new GameObject("ConnectionLine");
         cObj.transform.SetParent(transform);
         cObj.layer = layer;
         connectionLineRenderer = cObj.AddComponent<LineRenderer>();
+        connectionLineRenderer.sortingOrder=152;
         ConfigureLineRenderer(connectionLineRenderer, Color.yellow, 0.04f);
     }
 
@@ -993,11 +997,12 @@ public class CreatePolygon : MonoBehaviour
             bool commitFinalStep = currentStepIdx >= 0 && steps != null && currentStepIdx == steps.Count - 1;
             Mesh previewMesh = CreatePolygonMesh(
                 polyToDraw.vertices, stepColor, seedPt, currentCellIdx, previewOverlay: !commitFinalStep);
+            DrawBorderline(polyToDraw.vertices, currentCellIdx);
             if (commitFinalStep)
             {
                 meshs[currentCellIdx].GetComponent<MeshFilter>().mesh = previewMesh;
                 meshFilter.mesh = new Mesh();
-                DrawBorderline(polyToDraw.vertices, currentCellIdx);
+                
                 CopyBorderline(currentCellIdx);
                 if (lineRenderer != null) lineRenderer.positionCount = 0;
             }
